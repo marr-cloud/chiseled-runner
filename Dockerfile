@@ -7,6 +7,7 @@
 #
 # Targets:  slim    runner + shell + git/curl/jq/tar/xz/awk... (default)
 #           docker  slim + the static docker CLI, for jobs that use the host's socket.
+#           build   slim + a C toolchain (gcc, binutils, libc headers, make).
 #
 # The final image is built FROM scratch from a rootfs cut with chisel
 # (https://github.com/canonical/chisel): no apt, no dpkg, no package manager.
@@ -145,23 +146,107 @@ RUN src=/etc/apt/sources.list.d/ubuntu.sources \
  && apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ca-certificates jq zstd >/dev/null
 COPY --from=chisel /out/chisel /usr/local/bin/chisel
-COPY slices/${UBUNTU_RELEASE}.txt /slices.txt
+# Building for another architecture (arm64 on an amd64 host): give apt that
+# architecture's package lists too, so pkgdb looks packages up as
+# name:arch=version. Without them, an arch-specific name (the arm64 build's
+# gcc-13-aarch64-linux-gnu) matches the host's cross-compiler package of the
+# same name, and scanners get the wrong Source.
 RUN <<'EOF'
 set -eu
-case "${UBUNTU_RELEASE}" in
-  noble)    release=ubuntu-24.04 ;;
-  resolute) release=ubuntu-26.04 ;;
-  *) echo "UBUNTU_RELEASE must be noble or resolute" >&2; exit 1 ;;
+native=$(dpkg --print-architecture)
+[ "${TARGETARCH}" != "${native}" ] || exit 0
+. /etc/os-release
+src=/etc/apt/sources.list.d/ubuntu.sources
+sed -i "/^Types:/a Architectures: ${native}" "${src}"
+case "${TARGETARCH}" in
+  arm64) uris=http://ports.ubuntu.com/ubuntu-ports/ security=${uris} ;;
+  amd64) uris=${UBUNTU_MIRROR} security=http://security.ubuntu.com/ubuntu/ ;;
+  *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;;
 esac
-slices=$(grep -v '^[[:space:]]*#' /slices.txt | grep -v '^[[:space:]]*$')
+cat >> "${src}" <<SRC
+
+Types: deb
+Architectures: ${TARGETARCH}
+URIs: ${uris}
+Suites: ${VERSION_CODENAME} ${VERSION_CODENAME}-updates
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+Architectures: ${TARGETARCH}
+URIs: ${security}
+Suites: ${VERSION_CODENAME}-security
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+SRC
+dpkg --add-architecture "${TARGETARCH}"
+apt-get update -qq
+EOF
+
+# cut ROOT RELEASE SLICE_FILE...: chisel cut the slices listed in the files
+# (one per line, # comments) into a fresh ROOT, retrying on archive timeouts.
+# RELEASE is a chisel-releases branch name or a local directory.
+COPY --chmod=755 <<'EOF' /usr/local/bin/cut
+#!/bin/sh
+set -eu
+root=$1 release=$2; shift 2
+slices=$(cat "$@" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$')
 for attempt in 1 2 3 4; do
-  rm -rf /rootfs && mkdir /rootfs
+  rm -rf "${root}" && mkdir "${root}"
   # shellcheck disable=SC2086 # one argument per slice
-  chisel cut --release "${release}" --arch "${TARGETARCH}" --root /rootfs ${slices} && break
+  chisel cut --release "${release}" --arch "${TARGETARCH}" --root "${root}" ${slices} && exit 0
   [ "${attempt}" -lt 4 ] || exit 1
   echo "chisel cut failed (attempt ${attempt}); retrying in $((attempt * 15))s" >&2
   sleep $((attempt * 15))
 done
+EOF
+
+# pkgdb ROOT: scanners (trivy, grype, syft) do not read chisel's manifest.
+# Describe each package of ROOT's manifest in ROOT/var/lib/dpkg/status.d/, the
+# format distroless images use. The Source field maps binary packages to
+# Ubuntu security notices.
+COPY --chmod=755 <<'EOF' /usr/local/bin/pkgdb
+#!/bin/sh
+set -eu
+root=$1
+mkdir -p "${root}/var/lib/dpkg/status.d"
+zstd -dc "${root}/var/lib/chisel/manifest.wall" \
+  | jq -r 'select(.kind == "package") | "\(.name) \(.version) \(.arch)"' \
+  | while read -r name version arch; do
+      # name:arch=version first (see the foreign-architecture setup above);
+      # the unversioned fallback (the archive moved on since the cut) only
+      # for the build host's own architecture or arch-independent packages.
+      show() { apt-cache show "$1" 2>/dev/null | sed -n 's/^Source: //p' | head -1; }
+      src=$(show "${name}:${arch}=${version}")
+      if [ -z "${src}" ] && { [ "${arch}" = all ] || [ "${arch}" = "$(dpkg --print-architecture)" ]; }; then
+        src=$(show "${name}=${version}")
+        [ -n "${src}" ] || src=$(show "${name}")
+      fi
+      {
+        echo "Package: ${name}"
+        echo "Status: install ok installed"
+        [ -z "${src}" ] || echo "Source: ${src}"
+        echo "Version: ${version}"
+        echo "Architecture: ${arch}"
+      } > "${root}/var/lib/dpkg/status.d/${name}"
+    done
+test -n "$(ls "${root}/var/lib/dpkg/status.d")"
+EOF
+
+COPY --chmod=755 <<'EOF' /usr/local/bin/ubuntu-release
+#!/bin/sh
+case "${UBUNTU_RELEASE}" in
+  noble)    echo ubuntu-24.04 ;;
+  resolute) echo ubuntu-26.04 ;;
+  *) echo "UBUNTU_RELEASE must be noble or resolute" >&2; exit 1 ;;
+esac
+EOF
+
+COPY slices/${UBUNTU_RELEASE}.txt /slices.txt
+RUN <<'EOF'
+set -eu
+release=$(ubuntu-release)
+cut /rootfs "${release}" /slices.txt
 
 # `git submodule` is a shell script that no chisel slice ships, and
 # actions/checkout runs it on every checkout. Take it and the two shell
@@ -172,24 +257,7 @@ for f in git-submodule git-sh-setup git-sh-i18n; do
   cp -a "/tmp/git/usr/lib/git-core/$f" /rootfs/usr/lib/git-core/
 done
 
-# Scanners (trivy, grype, syft) do not read chisel's manifest. Describe each
-# package in /var/lib/dpkg/status.d/, the format distroless images use. The
-# Source field maps binary packages to Ubuntu security notices.
-mkdir -p /rootfs/var/lib/dpkg/status.d
-zstd -dc /rootfs/var/lib/chisel/manifest.wall \
-  | jq -r 'select(.kind == "package") | "\(.name) \(.version) \(.arch)"' \
-  | while read -r name version arch; do
-      src=$(apt-cache show "${name}=${version}" 2>/dev/null | sed -n 's/^Source: //p' | head -1)
-      [ -n "${src}" ] || src=$(apt-cache show "${name}" 2>/dev/null | sed -n 's/^Source: //p' | head -1)
-      {
-        echo "Package: ${name}"
-        echo "Status: install ok installed"
-        [ -z "${src}" ] || echo "Source: ${src}"
-        echo "Version: ${version}"
-        echo "Architecture: ${arch}"
-      } > "/rootfs/var/lib/dpkg/status.d/${name}"
-    done
-test -n "$(ls /rootfs/var/lib/dpkg/status.d)"
+pkgdb /rootfs
 
 # /bin/sh -> dash comes from dash_bins. Add the unprivileged runner user.
 echo 'runner:x:1001:1001:runner:/home/runner:/bin/bash' >> /rootfs/etc/passwd
@@ -203,6 +271,64 @@ chmod 1777 /rootfs/actions-runner
 chmod 1777 /rootfs/tmp
 # No setuid/setgid binaries (openssh-client ships ssh-keysign setuid root).
 find /rootfs -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
+EOF
+
+# ---------------------------------------------------------- toolchain ------
+# The `build` target's C toolchain, cut on its own and copied over the slim
+# image. Cut from a local copy of chisel-releases so that 24.04, which has
+# no make slice, gets one: the same definition 26.04 ships.
+FROM rootfs AS toolchain
+ARG UBUNTU_RELEASE
+ARG TARGETARCH
+COPY slices/${UBUNTU_RELEASE}-build.txt /slices-build.txt
+RUN <<'EOF'
+set -eu
+release=$(ubuntu-release)
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git >/dev/null
+git clone -q --depth 1 -b "${release}" https://github.com/canonical/chisel-releases /release
+if [ ! -e /release/slices/make.yaml ]; then
+  cat > /release/slices/make.yaml <<'YAML'
+package: make
+
+essential:
+  - make_copyright
+
+slices:
+  bins:
+    essential:
+      - libc6_libs
+    contents:
+      /usr/bin/make:
+
+  copyright:
+    contents:
+      /usr/share/doc/make/copyright:
+YAML
+fi
+# gcc's slices ship its LTO plugin but not lto-wrapper, so gcc passes the
+# linker an empty -plugin-opt=; ld.bfd ignores it, rust-lld (Rust's default
+# linker) fails. Ship lto-wrapper next to the plugin, for the same arch.
+# Skipped where the slice already lists it (fixed upstream).
+for f in /release/slices/gcc-*-x86-64-linux-gnu.yaml /release/slices/gcc-*-aarch64-linux-gnu.yaml; do
+  grep -q 'lto-wrapper:' "$f" && continue
+  awk '
+    /^      \/usr\/libexec\/gcc\/[^\/]+\/[0-9]+\/liblto_plugin\.so:$/ {
+      w = $0; sub(/liblto_plugin\.so:$/, "lto-wrapper:", w)
+      print; getline; print; print w; print; next
+    }
+    { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+done
+cut /toolchain /release /slices-build.txt
+ls /toolchain/usr/libexec/gcc/*/*/lto-wrapper >/dev/null || {
+  echo "lto-wrapper missing: update the gcc slice patch" >&2; exit 1; }
+pkgdb /toolchain
+# Keep /usr and /var (the package records in var/lib/dpkg/status.d, and the
+# same empty /var dirs the slim image has): the slim image's /etc, /tmp,
+# /lib symlinks and chisel manifest stay as they are. That manifest
+# describes the slim cut only; status.d describes both.
+find /toolchain -mindepth 1 -maxdepth 1 ! -name usr ! -name var -exec rm -rf {} +
+rm -rf /toolchain/var/lib/chisel
+find /toolchain -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 EOF
 
 # --------------------------------------------------------------- slim ------
@@ -238,6 +364,10 @@ COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 # buildx (docker/build-push-action, `docker build` with BuildKit) and compose,
 # where the CLI looks for system-wide plugins. Both are static.
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/
+
+# -------------------------------------------------------------- build ------
+FROM slim AS build
+COPY --from=toolchain /toolchain/ /
 
 # The default target is the last stage, so keep `slim` last.
 FROM slim
