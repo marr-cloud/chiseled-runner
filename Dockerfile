@@ -407,7 +407,7 @@ case "${UBUNTU_RELEASE}" in
   resolute) icu=libicu78 ;;
   *) echo "UBUNTU_RELEASE must be noble or resolute" >&2; exit 1 ;;
 esac
-# UBUNTU_MIRROR for this build only (same guard as the rootfs stage): the
+# UBUNTU_MIRROR for the install only (same guard as the rootfs stage): the
 # image keeps Ubuntu's own sources for `apt-get` in images built FROM it.
 src=/etc/apt/sources.list.d/ubuntu.sources
 cp "${src}" /tmp/ubuntu.sources
@@ -423,8 +423,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
   "${icu}" $(grep -v '^[[:space:]]*#' /tmp/packages.txt | grep -v '^[[:space:]]*$') >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq >/dev/null
 mv /tmp/ubuntu.sources "${src}"
+# Package lists for those sources, so that `apt-get install` (in a derived
+# image, or a job with RUN_AS_ROOT=true) works without an update first.
+rm -rf /var/lib/apt/lists/*
+apt-get update -qq
 apt-get clean
-rm -rf /var/lib/apt/lists/* /tmp/packages.txt
+rm -f /tmp/packages.txt
 
 # The runner user (uid and gid 1001, like the slim image) and its directories.
 groupadd -g 1001 runner

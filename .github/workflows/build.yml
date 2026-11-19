@@ -192,18 +192,19 @@ jobs:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'cd /tmp && git init -q t && cd t && git submodule foreach true && echo "git submodule ok"'
           if [ "${{ matrix.target }}" = full ]; then
-            # A real dpkg database, Ubuntu's own apt sources (not the build's
-            # mirror) and no package lists left in the image:
+            # A real dpkg database, and Ubuntu's own apt sources (not the
+            # build's mirror) with their package lists, so `apt-get install`
+            # works without an update first:
             docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
               dpkg-query -W libssl3t64 build-essential
               grep -Eq "^URIs: http://(archive|ports)\.ubuntu\.com/" /etc/apt/sources.list.d/ubuntu.sources
               ! grep -q azure /etc/apt/sources.list.d/ubuntu.sources
-              test -z "$(ls /var/lib/apt/lists)"
+              ls /var/lib/apt/lists | grep -Eq "(archive|ports)\.ubuntu\.com"
+              ! ls /var/lib/apt/lists | grep -q azure
               echo "apt ok"'
             # sudo is a shim that never raises privileges. As root
             # (RUN_AS_ROOT=true) it runs the command, like myoung34's sudo:
             docker run --rm --user 0 --entrypoint /usr/bin/bash "$IMG" -ec '
-              sudo apt-get update -qq
               sudo -E -H apt-get install -y -qq hello >/dev/null
               test "$(hello)" = "Hello, world!"
               test "$(sudo -- id -u)" = 0
