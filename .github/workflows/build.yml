@@ -47,7 +47,23 @@ jobs:
       version: ${{ steps.r.outputs.version }}
       sha_amd64: ${{ steps.r.outputs.sha_amd64 }}
       sha_arm64: ${{ steps.r.outputs.sha_arm64 }}
+      e2e: ${{ steps.e2e.outputs.e2e }}
+      nonce: ${{ steps.e2e.outputs.nonce }}
     steps:
+      # Whether this run takes a real job on each image (see the e2e job), and
+      # a nonce for its runner labels, so that no other runner can be
+      # registered in advance to take that job. Fork and Dependabot PRs get no
+      # secrets, so they skip it.
+      - id: e2e
+        env:
+          E2E_ENABLED: ${{ vars.E2E_ENABLED }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          e2e=false
+          if [ "$E2E_ENABLED" = true ] && [ "$FORK" = false ] && [ "$ACTOR" != 'dependabot[bot]' ]; then e2e=true; fi
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          echo "nonce=$(openssl rand -hex 8)" >> "$GITHUB_OUTPUT"
       - id: r
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,36 +97,22 @@ jobs:
       matrix:
         release: [noble, resolute]
         target: [slim, docker]
+    # Runs job code (the e2e runner below), so it holds no publish credentials:
+    # publishing is the `publish` job, on another VM.
     permissions:
       contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    env:
-      PUBLISH: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Compute names
         id: n
         run: |
-          v=${{ needs.resolve.outputs.version }}
           base=${{ matrix.release }}
           [ "${{ matrix.target }}" = docker ] && base="${base}-docker"
           echo "local=chiseled-runner:${base}" >> "$GITHUB_OUTPUT"
-          {
-            echo 'tags<<EOF'
-            for img in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
-              echo "${img}:${base}"
-              echo "${img}:${base}-${v}"
-              [ "$base" = noble ] && echo "${img}:latest"
-            done
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
 
       # Build for the runner's own architecture first and test that image.
       - name: Build (amd64, for tests)
@@ -121,6 +123,8 @@ jobs:
           load: true
           tags: ${{ steps.n.outputs.local }}
           cache-from: type=gha,scope=${{ matrix.release }}-${{ matrix.target }}
+          # The publish job rebuilds from this cache.
+          cache-to: type=gha,scope=${{ matrix.release }}-${{ matrix.target }},mode=max
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
             UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu/
@@ -185,22 +189,203 @@ jobs:
           docker compose down
           test "$n" -eq 3 || { echo "expected 3 distinct runner names, got $n"; exit 1; }
 
+      # A real job on this image: the e2e job below. The App key stays on this
+      # VM: the container only gets a registration token (valid 1 h, good for
+      # registering a runner and nothing else).
+      - name: e2e token
+        id: app
+        if: needs.resolve.outputs.e2e == 'true'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ secrets.E2E_APP_ID }}
+          private-key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
+          permission-administration: write
+
+      - name: e2e runner (a real job on this image)
+        if: needs.resolve.outputs.e2e == 'true'
+        env:
+          IMG: ${{ steps.n.outputs.local }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          LABEL: ghr-e2e-${{ needs.resolve.outputs.nonce }}-${{ matrix.release }}-${{ matrix.target }}
+          NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.release }}-${{ matrix.target }}
+          JOB: e2e (${{ matrix.release }}, ${{ matrix.target }})
+          E2E_TIMEOUT: '900'
+        run: |
+          set -euo pipefail
+          RUNNER_TOKEN=$(gh api -X POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
+          echo "::add-mask::$RUNNER_TOKEN"
+          export RUNNER_TOKEN
+          docker_args=()
+          if [ "${{ matrix.target }}" = docker ]; then
+            # Same setup as compose.docker.yaml: host socket, its group, and a work
+            # directory at the same path on both sides, owned by the runner user.
+            sudo install -d -o 1001 -g 1001 /tmp/runners
+            docker_args=(-v /var/run/docker.sock:/var/run/docker.sock
+                         --group-add "$(stat -c %g /var/run/docker.sock)"
+                         -v /tmp/runners:/tmp/runners -e RUNNER_WORKDIR_ROOT=/tmp/runners)
+          fi
+          docker run -d --init --name e2e "${docker_args[@]}" \
+            -e RUNNER_TOKEN \
+            -e REPO_URL="https://github.com/${{ github.repository }}" \
+            -e LABELS="$LABEL" -e NO_DEFAULT_LABELS=true \
+            -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true \
+            -e RUNNER_NAME="$NAME" -e RUNNER_NAME_SUFFIX=none \
+            "$IMG" >/dev/null
+          code=$(timeout "$E2E_TIMEOUT" docker wait e2e || echo timeout)
+          docker stop -t 60 e2e >/dev/null 2>&1 || true
+          docker logs -t e2e > e2e.log 2>&1
+          echo "::group::runner log"; cat e2e.log; echo "::endgroup::"
+          # The job this runner took must be this variant's e2e job, and it must
+          # have passed. grep a file, not a pipe: with pipefail, grep -q closing
+          # early fails the pipe.
+          ok=no
+          grep -qF "Running job: $JOB" e2e.log && grep -qF "Job $JOB completed with result: Succeeded" e2e.log && ok=yes
+          echo "runner exit: $code, $JOB succeeded on this runner: $ok"
+          # Startup on a Linux host: container start -> listening -> job picked up.
+          at() { grep -m1 "$1" e2e.log | cut -d' ' -f1 || true; }
+          secs() { [ -n "$1" ] && [ -n "$2" ] && echo "$(( $(date -d "$2" +%s%3N) - $(date -d "$1" +%s%3N) ))" | awk '{printf "%.1f s", $1/1000}' || echo "-"; }
+          started=$(docker inspect -f '{{.State.StartedAt}}' e2e)
+          listening=$(at 'Listening for Jobs'); picked=$(at 'Running job')
+          echo "| ${{ matrix.release }} / ${{ matrix.target }} | start to listening: $(secs "$started" "$listening") | listening to job picked up: $(secs "$listening" "$picked") |" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$code" = 0 ] && [ "$ok" = yes ]
+
+      # Also when the step above failed or the run was cancelled mid-wait. With
+      # only a registration token ghr cannot deregister itself, so a runner that
+      # did not finish its one job is deleted here.
+      - name: Remove the e2e runner
+        if: always() && needs.resolve.outputs.e2e == 'true' && steps.app.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.release }}-${{ matrix.target }}
+        run: |
+          if docker inspect e2e >/dev/null 2>&1; then
+            docker stop -t 60 e2e >/dev/null 2>&1 || true
+            docker logs --tail 5 e2e 2>&1 || true
+            docker rm -f e2e >/dev/null
+          fi
+          ids=$(gh api "repos/${{ github.repository }}/actions/runners?per_page=100" --jq ".runners[] | select(.name == \"$NAME\") | .id")
+          for id in $ids; do
+            echo "deleting runner $NAME ($id)"
+            gh api -X DELETE "repos/${{ github.repository }}/actions/runners/$id"
+          done
+
+  # Runs on the runner that the `image` job starts from the image it just built.
+  # Queued from the start; its only label is unique to this run and variant.
+  e2e:
+    needs: [resolve]
+    if: needs.resolve.outputs.e2e == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+        target: [slim, docker]
+    runs-on: ["ghr-e2e-${{ needs.resolve.outputs.nonce }}-${{ matrix.release }}-${{ matrix.target }}"]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: an action that declares node20 runs on Node 24
+        uses: ./.github/actions/node20-probe
+      - name: hashFiles (the runner's internal Node)
+        run: |
+          h='${{ hashFiles('go.mod') }}'
+          echo "hash=$h"; test -n "$h"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: node --version
+      - name: runner credentials are not visible to job steps
+        run: test -z "${RUNNER_TOKEN:-}${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
+      - name: git submodule (used by actions/checkout)
+        run: git submodule status && echo "submodule ok"
+      - name: docker jobs use the host daemon
+        if: matrix.target == 'docker'
+        run: docker run --rm hello-world | grep 'Hello from Docker!'
+      - name: bind mounts of the workspace resolve on the host
+        if: matrix.target == 'docker'
+        run: |
+          echo ok > probe
+          test "$(docker run --rm -v "$GITHUB_WORKSPACE:/w" busybox cat /w/probe)" = ok && echo "workspace mount ok"
+
+  # An e2e job whose image job failed before starting its runner would wait
+  # for a runner forever. Every image job (and so every e2e runner) is done
+  # here: cancel the run only if an e2e job is still waiting.
+  cancel-orphans:
+    needs: [test, resolve, image]
+    if: always() && needs.resolve.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          waiting=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs?per_page=100" \
+            --jq '.jobs[] | select((.name | startswith("e2e (")) and (.status | test("^(queued|waiting|pending|requested)$"))) | .name')
+          if [ -n "$waiting" ]; then
+            echo "::error::no runner will come for: $(echo "$waiting" | paste -sd, -); cancelling the run (the cause is in the failed image job)"
+            gh api -X POST "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel" >/dev/null
+          fi
+
+  publish:
+    needs: [resolve, image, e2e]
+    # e2e is skipped only when it is not enabled for this run.
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && needs.image.result == 'success' &&
+      (needs.e2e.result == 'success' || (needs.e2e.result == 'skipped' && needs.resolve.outputs.e2e != 'true'))
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+        target: [slim, docker]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Compute tags
+        id: n
+        run: |
+          v=${{ needs.resolve.outputs.version }}
+          base=${{ matrix.release }}
+          [ "${{ matrix.target }}" = docker ] && base="${base}-docker"
+          {
+            echo 'tags<<EOF'
+            for img in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
+              echo "${img}:${base}"
+              echo "${img}:${base}-${v}"
+              [ "$base" = noble ] && echo "${img}:latest"
+            done
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: Log in to Docker Hub
-        if: env.PUBLISH == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Log in to GHCR
-        if: env.PUBLISH == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # Same inputs as the tested build; the amd64 layers come from its cache.
       - name: Publish (multi-arch, with SBOM and provenance)
-        if: env.PUBLISH == 'true'
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -222,7 +407,6 @@ jobs:
             VERSION=${{ github.sha }}
 
       - name: Attest build provenance (GHCR)
-        if: env.PUBLISH == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.GHCR_IMAGE }}

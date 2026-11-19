@@ -1,0 +1,5 @@
+name: node20 probe
+description: A JavaScript action that declares node20, to check how the runner runs it.
+runs:
+  using: node20
+  main: index.js
