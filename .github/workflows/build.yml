@@ -179,13 +179,13 @@ jobs:
           APP_ID: ${{ secrets.E2E_APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.E2E_APP_PRIVATE_KEY }}
           LABEL: ghr-e2e-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.release }}-${{ matrix.target }}
-          E2E_TIMEOUT: '900'
+          E2E_TIMEOUT: '90'   # TEMP negative test
         run: |
           set -euo pipefail
           if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
             echo "::error::E2E_ENABLED is true but the E2E_APP_ID / E2E_APP_PRIVATE_KEY secrets are empty"; exit 1
           fi
-          docker run -d --init --name e2e             -e APP_ID -e APP_PRIVATE_KEY             -e REPO_URL="https://github.com/${{ github.repository }}"             -e LABELS="$LABEL" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true             -e RUNNER_NAME="e2e-${{ matrix.release }}-${{ matrix.target }}"             "$IMG" >/dev/null
+          docker run -d --init --name e2e             -e APP_ID -e APP_PRIVATE_KEY             -e REPO_URL="https://github.com/${{ github.repository }}"             -e LABELS="$LABEL-wrong" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true             -e RUNNER_NAME="e2e-${{ matrix.release }}-${{ matrix.target }}"             "$IMG" >/dev/null
           code=$(timeout "$E2E_TIMEOUT" docker wait e2e || echo timeout)
           docker stop -t 60 e2e >/dev/null 2>&1 || true   # SIGTERM: ghr deregisters the runner
           docker logs e2e > e2e.log 2>&1
