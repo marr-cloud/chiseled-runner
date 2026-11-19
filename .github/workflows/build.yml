@@ -19,6 +19,13 @@ on:
 permissions:
   contents: read
 
+# One run per branch or PR at a time. A new push to a PR replaces its running
+# build; on main (and the weekly schedule) runs queue instead, so a publish is
+# never cut short and two runs never race on the build cache or `:latest`.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   DOCKERHUB_IMAGE: docker.io/meitrix8208/chiseled-runner
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
