@@ -1,0 +1,29 @@
+name: e2e (local runner)
+# Temporary: taken by a locally started runner. Removed before merge.
+on:
+  push:
+    branches: [fix/ghr-drop-privileges]
+    paths: ['.github/workflows/e2e-local.yml']
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: [ghr-privcheck]
+    steps:
+      - name: job runs as the runner user
+        run: id; test "$(id -u)" = 1001
+      - name: no process exposes credentials to the job
+        run: |
+          leaks=0
+          for p in /proc/[0-9]*; do
+            if tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qE '^(ACCESS_TOKEN|APP_PRIVATE_KEY|RUNNER_TOKEN)='; then
+              echo "credentials readable in pid ${p#/proc/}: $(tr '\0' ' ' < "$p/cmdline")"; leaks=1
+            fi
+          done
+          test "$leaks" = 0 && echo "no credentials readable"
+      - name: docker through the host socket (group 0 on Docker Desktop)
+        run: docker run --rm hello-world | grep 'Hello from Docker!'
+      - name: workspace on a root-owned bind mount
+        run: |
+          pwd; echo ok > probe
+          test "$(docker run --rm -v "$PWD:/w" busybox cat /w/probe)" = ok && echo "workspace mount ok"
