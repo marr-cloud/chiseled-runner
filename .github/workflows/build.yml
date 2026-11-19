@@ -268,6 +268,7 @@ jobs:
         run: test -z "${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
+      - run: exit 1   # TEMP negative test
 
   keepalive:
     # Scheduled workflows are disabled after 60 days without repository activity.
