@@ -37,11 +37,15 @@ ARG CHISEL_VERSION=v1.5.1
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
 RUN <<'EOF'
 set -eu
-case "${UBUNTU_MIRROR}" in
-  http://*/|https://*/) ;;
-  *) echo "UBUNTU_MIRROR must be an http(s) URL ending in /" >&2; exit 1 ;;
-esac
+# http only: apt runs before ca-certificates is installed, and the signatures,
+# not TLS, are what protect the packages. No credentials (they would end up
+# in the published provenance), no characters that need quoting.
+printf '%s' "${UBUNTU_MIRROR}" | grep -Eqx 'http://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%+-]+)*/' || {
+  echo "UBUNTU_MIRROR must look like http://host[:port]/path/ (got '${UBUNTU_MIRROR}')" >&2
+  exit 1
+}
 go mod download "github.com/canonical/chisel@${CHISEL_VERSION}"
+rm -rf /src
 cp -r "$(go env GOMODCACHE)/github.com/canonical/chisel@${CHISEL_VERSION}" /src
 chmod -R u+w /src
 cd /src
@@ -116,8 +120,8 @@ ARG UBUNTU_RELEASE
 ARG TARGETARCH
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
 # The Ubuntu archive occasionally times out from CI; retry rather than fail
-# a weekly build. apt uses the same mirror as chisel (security.ubuntu.com,
-# and chisel's ports.ubuntu.com for arm64, stay as they are).
+# a weekly build. apt uses the same mirror as chisel; security.ubuntu.com
+# and ports.ubuntu.com (noble on an arm64 build host) stay as they are.
 RUN sed -i "s|http://archive.ubuntu.com/ubuntu/\?|${UBUNTU_MIRROR}|" /etc/apt/sources.list.d/ubuntu.sources \
  && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries \
  && apt-get update -qq \
