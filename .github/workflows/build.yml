@@ -170,6 +170,29 @@ jobs:
           docker compose down
           test "$n" -eq 3 || { echo "expected 3 distinct runner names, got $n"; exit 1; }
 
+      # A real job on this image, run by the `e2e` job below, before publishing.
+      - name: e2e runner (a real job on this image)
+        if: vars.E2E_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          IMG: ${{ steps.n.outputs.local }}
+          APP_ID: ${{ secrets.E2E_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.E2E_APP_PRIVATE_KEY }}
+          LABEL: ghr-e2e-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.release }}-${{ matrix.target }}
+          E2E_TIMEOUT: '900'
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "::error::E2E_ENABLED is true but the E2E_APP_ID / E2E_APP_PRIVATE_KEY secrets are empty"; exit 1
+          fi
+          docker run -d --init --name e2e             -e APP_ID -e APP_PRIVATE_KEY             -e REPO_URL="https://github.com/${{ github.repository }}"             -e LABELS="$LABEL" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true             -e RUNNER_NAME="e2e-${{ matrix.release }}-${{ matrix.target }}"             "$IMG" >/dev/null
+          code=$(timeout "$E2E_TIMEOUT" docker wait e2e || echo timeout)
+          docker stop -t 60 e2e >/dev/null 2>&1 || true   # SIGTERM: ghr deregisters the runner
+          echo "::group::runner log"; docker logs e2e 2>&1; echo "::endgroup::"
+          ok=no; docker logs e2e 2>&1 | grep -q 'completed with result: Succeeded' && ok=yes
+          docker rm e2e >/dev/null
+          echo "runner exit: $code, job succeeded: $ok"
+          [ "$code" = 0 ] && [ "$ok" = yes ]
+
       - name: Log in to Docker Hub
         if: env.PUBLISH == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -212,6 +235,37 @@ jobs:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+  # Runs on the runner that the `image` job starts from the image it just built.
+  # Queued from the start; the label is unique to this run, attempt and variant.
+  e2e:
+    needs: [resolve]
+    if: vars.E2E_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+        target: [slim, docker]
+    runs-on: [self-hosted, "ghr-e2e-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.release }}-${{ matrix.target }}"]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: an action that declares node20 runs on Node 24
+        uses: ./.github/actions/node20-probe
+      - name: hashFiles (the runner's internal Node)
+        run: |
+          h='${{ hashFiles('go.mod') }}'
+          echo "hash=$h"; test -n "$h"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: node --version
+      - name: runner credentials are not visible to job steps
+        run: test -z "${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
+      - name: git submodule (used by actions/checkout)
+        run: git submodule status && echo "submodule ok"
 
   keepalive:
     # Scheduled workflows are disabled after 60 days without repository activity.
