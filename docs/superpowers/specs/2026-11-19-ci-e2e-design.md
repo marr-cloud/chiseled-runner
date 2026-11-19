@@ -43,7 +43,8 @@ Side benefit: startup numbers measured on Linux, not Docker Desktop.
 - Orphans: if `image` fails or is cancelled before its runner takes the job,
   a final `if: failure() || cancelled()` step cancels the workflow run
   (needs `actions: write` on that job only).
-- Skips: both jobs run only when the event is not a fork PR; the e2e step also
-  skips if `E2E_APP_ID` is empty, so the repo works before the App exists.
+- Skips: both jobs run only when the event is not a fork PR; both are
+  also gated on the repo variable `E2E_ENABLED == 'true'` (a job-level `if:`
+  cannot read secrets), so the repo works before the App exists.
 - Known limit: "Re-run failed jobs" on `image` alone would wait for an e2e job
   that is not re-run (timeout after 15 min); use "Re-run all jobs". Documented.
