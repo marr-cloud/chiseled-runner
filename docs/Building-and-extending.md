@@ -35,8 +35,9 @@ The runner's only label is `ghr-e2e-<random>-<release>-<variant>`, and the image
 
 How the credentials are kept apart:
 
-- The GitHub App key never enters the container. The image job mints an installation token, uses it to get a registration token (valid one hour, good only for registering a runner), and passes only that as `RUNNER_TOKEN`. Afterwards it deletes the runner through the API if it is still registered.
-- The image job, whose VM runs the job's code, has no registry credentials and only `contents: read`. A separate `publish` job, which needs both `image` and `e2e`, rebuilds from the image job's build cache, pushes and attests.
+- The GitHub App key and installation token never enter the container. The image job mints an installation token, uses it to get a registration token (valid one hour, good only for registering runners), revokes it, and passes only the registration token as `RUNNER_TOKEN`. Afterwards it deletes the runner through the API with a fresh token if it is still registered.
+- The image job has no registry credentials and only `contents: read`. A separate `publish` job, which needs both `image` and `e2e`, rebuilds from the image job's build cache, pushes and attests on another VM.
+- On `-docker` variants the job has the host's Docker socket, which is root on that VM, as it is on any host you give the socket to. There it can read the registration token, and the App key the image job used. That is acceptable here because only code that already has write access to this repository runs in these jobs (fork and Dependabot PRs skip them), but a compromised dependency of the job would reach them.
 
 ### Setting it up in a fork or copy
 
