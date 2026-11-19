@@ -56,7 +56,26 @@ jobs:
       sha_arm64: ${{ steps.r.outputs.sha_arm64 }}
       e2e: ${{ steps.e2e.outputs.e2e }}
       nonce: ${{ steps.e2e.outputs.nonce }}
+      archive_state: ${{ steps.archive.outputs.state }}
     steps:
+      # The Ubuntu archive's state: when it publishes updates, the image's
+      # package cut is redone instead of coming from the build cache (see
+      # UBUNTU_ARCHIVE_STATE in the Dockerfile). Same mirror as the builds.
+      - id: archive
+        env:
+          MIRROR: http://azure.archive.ubuntu.com/ubuntu/
+        run: |
+          set -euo pipefail
+          dates=""
+          for suite in noble noble-updates noble-security resolute resolute-updates resolute-security; do
+            d=$(curl -fsS --retry 5 --retry-all-errors --max-time 60 "${MIRROR}dists/${suite}/InRelease" | sed -n 's/^Date: //p' | head -1)
+            test -n "$d" || { echo "::error::no Date in ${suite}/InRelease"; exit 1; }
+            echo "$suite: $d"
+            dates="${dates}${suite} ${d};"
+          done
+          state=$(printf '%s' "$dates" | sha256sum | cut -c1-16)
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "Ubuntu archive state: \`$state\`" >> "$GITHUB_STEP_SUMMARY"
       # Whether this run takes a real job on each image (see the e2e job), and
       # a nonce for its runner labels, so that no other runner can be
       # registered in advance to take that job. Fork and Dependabot PRs get no
@@ -135,6 +154,7 @@ jobs:
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
             UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu/
+            UBUNTU_ARCHIVE_STATE=${{ needs.resolve.outputs.archive_state }}
             RUNNER_VERSION=${{ needs.resolve.outputs.version }}
             RUNNER_SHA256_AMD64=${{ needs.resolve.outputs.sha_amd64 }}
             RUNNER_SHA256_ARM64=${{ needs.resolve.outputs.sha_arm64 }}
@@ -499,6 +519,7 @@ jobs:
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
             UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu/
+            UBUNTU_ARCHIVE_STATE=${{ needs.resolve.outputs.archive_state }}
             RUNNER_VERSION=${{ needs.resolve.outputs.version }}
             RUNNER_SHA256_AMD64=${{ needs.resolve.outputs.sha_amd64 }}
             RUNNER_SHA256_ARM64=${{ needs.resolve.outputs.sha_arm64 }}
