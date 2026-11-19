@@ -88,6 +88,8 @@ parse:
 		environ: childEnv(os.Environ(), cred == nil && os.Getuid() == 0),
 		cred:    cred,
 
+		resetRoots: cleanRoots,
+
 		retryDelay: 5 * time.Second,
 		updateWait: 30 * time.Second,
 	}

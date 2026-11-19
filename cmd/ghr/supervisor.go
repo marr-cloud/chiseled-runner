@@ -44,6 +44,9 @@ type Supervisor struct {
 	environ []string
 	cred    *syscall.Credential // run children as this user; nil keeps ghr's own
 
+	// resetRoots are emptied on every start when cred != nil (see resetState).
+	resetRoots []string
+
 	retryDelay time.Duration // wait before relaunching after exit code 2
 	updateWait time.Duration // how long to wait for update.finished after exit 3/4
 }
@@ -52,6 +55,16 @@ type Supervisor struct {
 // Signals received on sigs are forwarded to the runner while it is running.
 func (s *Supervisor) Run(ctx context.Context, sigs <-chan os.Signal) int {
 	cfg := s.cfg
+	if s.cred != nil {
+		mounts, err := mountPoints()
+		if err == nil {
+			err = resetState(cfg.RunnerDir, append(append([]string{}, s.resetRoots...), cfg.Workdir), mounts)
+		}
+		if err != nil {
+			s.log.Error("reset the state left by a previous run", "err", err)
+			return 1
+		}
+	}
 	if err := s.makeWorkdir(); err != nil {
 		if errors.Is(err, fs.ErrPermission) && os.Getuid() == 0 {
 			s.log.Error("create workdir", "dir", cfg.Workdir, "err", err,
@@ -122,7 +135,8 @@ func (s *Supervisor) configure(ctx context.Context, sigs <-chan os.Signal, token
 	if cfg.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
-	if cfg.DisableUpdate {
+	// As root, the runner's bin/ is root-owned: it could not update itself.
+	if cfg.DisableUpdate || s.cred != nil {
 		args = append(args, "--disableupdate")
 	}
 	if cfg.NoDefaultLabels {
