@@ -343,6 +343,11 @@ jobs:
                          --group-add "$(stat -c %g /var/run/docker.sock)"
                          -v /tmp/runners:/tmp/runners -e RUNNER_WORKDIR_ROOT=/tmp/runners)
           fi
+          # -full runs the way a myoung34 migrant would start it: jobs as root,
+          # so workflows' `sudo apt-get install` works (smoke tests cover 1001).
+          if [ "${{ matrix.target }}" = full ]; then
+            docker_args=(-e RUN_AS_ROOT=true)
+          fi
           docker run -d --init --name e2e "${docker_args[@]}" \
             -e RUNNER_TOKEN \
             -e REPO_URL="https://github.com/${{ github.repository }}" \
@@ -446,6 +451,12 @@ jobs:
         run: python -c "import ssl, sqlite3, ctypes, lzma, bz2, zlib, readline, curses, dbm.gnu, uuid; print('python ok')"
       - name: runner credentials are not visible to job steps
         run: test -z "${RUNNER_TOKEN:-}${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
+      - name: myoung34-style sudo apt-get install (RUN_AS_ROOT=true)
+        if: matrix.target == 'full'
+        run: |
+          test "$(id -u)" = 0
+          sudo apt-get install -y hello
+          hello
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master 2026-11-15

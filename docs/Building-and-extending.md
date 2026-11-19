@@ -39,6 +39,7 @@ How the credentials are kept apart:
 - The GitHub App key and installation token never enter the container. The image job mints an installation token, uses it to get a registration token (valid one hour, good only for registering runners), revokes it, and passes only the registration token as `RUNNER_TOKEN`. Afterwards it deletes the runner through the API with a fresh token if it is still registered.
 - The image job has no registry credentials and only `contents: read`. A separate `publish` job, which needs both `image` and `e2e`, rebuilds from the image job's build cache, pushes and attests on another VM.
 - On `-docker` variants the job has the host's Docker socket, which is root on that VM, as it is on any host you give the socket to. There it can read the registration token, and the App key the image job used. That is acceptable here because only code that already has write access to this repository runs in these jobs (fork and Dependabot PRs skip them), but a compromised dependency of the job would reach them.
+- On `-full` the e2e runner starts with `RUN_AS_ROOT=true`, as a migrated myoung34 setup would, so the job is root in its container and can read the registration token from `/proc` (not the App key, which never enters the container). The token only registers runners and expires within the hour.
 
 ### Setting it up in a fork or copy
 
@@ -66,12 +67,24 @@ It takes one job, then removes itself from the repository.
 
 ## When chisel is not enough
 
-If your jobs need `apt` packages, a C++ compiler or `-dev` libraries, use the `-full` tags: plain Ubuntu with the same runner and `ghr`, `build-essential`, `pkg-config`, `python3` and the docker CLI (the package list is `packages/full.txt`). Jobs still run as uid 1001 without `sudo`, so add packages in your own image:
+If your jobs need `apt` packages, a C++ compiler or `-dev` libraries, use the `-full` tags: plain Ubuntu with the same runner and `ghr`, `build-essential`, `pkg-config`, `python3` and the docker CLI (the package list is `packages/full.txt`). Jobs run as uid 1001, and the image's `sudo` never raises privileges. A workflow that runs `sudo apt-get install` (written for myoung34 or `ubuntu-latest`) has two options:
+
+- **Start the runner with `RUN_AS_ROOT=true`.** Jobs run as root and `sudo apt-get install` works on the first run, as on myoung34, with the same exposure (see [Security](Security.md)). The image has its package lists, so no `apt-get update` is needed first.
+- **Add the packages to your own image** and keep jobs at uid 1001:
 
 ```dockerfile
 FROM meitrix8208/chiseled-runner:noble-full
 RUN apt-get update  && apt-get install -y --no-install-recommends libpq-dev protobuf-compiler  && rm -rf /var/lib/apt/lists/*
 ```
+
+### Stop running jobs as root
+
+Once a migrated workflow passes with `RUN_AS_ROOT=true`, you can move its packages into the image and drop root without editing the workflow:
+
+1. Collect the packages its `sudo apt-get install` lines name, and install them in an image built `FROM` `-full`, as above.
+2. Run that image without `RUN_AS_ROOT`.
+
+As uid 1001, the image's `sudo` lets `apt-get update` pass, and `apt-get install` too when every package it names is already installed ("already installed: ..."). A package you missed fails the job with a message naming it, instead of installing silently as root.
 
 Keep the image's entrypoint and do not set `USER`: the container starts as root so that `ghr` can keep the credentials away from jobs, and runs the runner as uid 1001 itself. If a package you add ships setuid binaries, remove the bits (`find / -xdev -perm /6000 -type f -exec chmod ug-s {} +`) unless your jobs should be able to get root.
 
