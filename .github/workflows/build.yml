@@ -192,16 +192,52 @@ jobs:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'cd /tmp && git init -q t && cd t && git submodule foreach true && echo "git submodule ok"'
           if [ "${{ matrix.target }}" = full ]; then
-            # A real dpkg database, Ubuntu's own apt sources (not the build's
-            # mirror) and no package lists left in the image:
+            # A real dpkg database, and Ubuntu's own apt sources (not the
+            # build's mirror) with their package lists, so `apt-get install`
+            # works without an update first:
             docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
               dpkg-query -W libssl3t64 build-essential
               grep -Eq "^URIs: http://(archive|ports)\.ubuntu\.com/" /etc/apt/sources.list.d/ubuntu.sources
               ! grep -q azure /etc/apt/sources.list.d/ubuntu.sources
-              test -z "$(ls /var/lib/apt/lists)"
+              ls /var/lib/apt/lists | grep -Eq "(archive|ports)\.ubuntu\.com"
+              ! ls /var/lib/apt/lists | grep -q azure
               echo "apt ok"'
-            # No sudo, and apt needs root: jobs cannot install packages.
-            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -c '! command -v sudo && ! apt-get install -y -qq hello 2>/dev/null && echo "jobs cannot install packages"'
+            # sudo is a shim that never raises privileges. As root
+            # (RUN_AS_ROOT=true) it runs the command, like myoung34's sudo,
+            # environment assignments included:
+            docker run --rm --user 0 --entrypoint /usr/bin/bash "$IMG" -ec '
+              sudo -E -H DEBIAN_FRONTEND=noninteractive apt-get install -y -qq hello >/dev/null
+              test "$(hello)" = "Hello, world!"
+              test "$(sudo -- id -u)" = 0
+              test "$(sudo -u root bash -c "echo ok")" = ok
+              echo "sudo as root ok"'
+            # As the runner user it cannot install anything...
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              cd /tmp
+              fails() { if "$@" 2>/dev/null; then echo "unexpected success: $*"; exit 1; fi; }
+              fails sudo apt-get install -y hello
+              sudo apt-get -o Dpkg::Options::=--force-confold install -y hello 2> err || true
+              grep -q RUN_AS_ROOT=true err
+              grep -q FROM err
+              grep -q "(missing: hello)" err
+              fails sudo id
+              fails sudo -u nobody id
+              fails sudo -i
+              fails sudo DEBIAN_FRONTEND=noninteractive id
+              fails apt-get install -y -qq hello
+              echo "sudo as 1001 refuses"'
+            # ...but an update, or packages the image already has, pass, so
+            # the same workflow runs unchanged on an image built FROM -full:
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+              sudo apt-get update
+              sudo apt-get -qq update
+              out=$(sudo apt-get install -y -q --no-install-recommends curl git:amd64 2>&1)
+              case "$out" in *"already installed"*) ;; *) echo "$out"; exit 1 ;; esac
+              sudo apt install -y git=$(dpkg-query -W -f="\${Version}" git)
+              sudo apt-get -y install git
+              sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold -t "$codename" install -y git
+              echo "sudo as 1001 passes for installed packages"'
           else
             # Package metadata, so scanners can see the Ubuntu packages:
             docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
@@ -317,6 +353,11 @@ jobs:
                          --group-add "$(stat -c %g /var/run/docker.sock)"
                          -v /tmp/runners:/tmp/runners -e RUNNER_WORKDIR_ROOT=/tmp/runners)
           fi
+          # -full runs the way a myoung34 migrant would start it: jobs as root,
+          # so workflows' `sudo apt-get install` works (smoke tests cover 1001).
+          if [ "${{ matrix.target }}" = full ]; then
+            docker_args=(-e RUN_AS_ROOT=true)
+          fi
           docker run -d --init --name e2e "${docker_args[@]}" \
             -e RUNNER_TOKEN \
             -e REPO_URL="https://github.com/${{ github.repository }}" \
@@ -420,6 +461,12 @@ jobs:
         run: python -c "import ssl, sqlite3, ctypes, lzma, bz2, zlib, readline, curses, dbm.gnu, uuid; print('python ok')"
       - name: runner credentials are not visible to job steps
         run: test -z "${RUNNER_TOKEN:-}${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
+      - name: myoung34-style sudo apt-get install (RUN_AS_ROOT=true)
+        if: matrix.target == 'full'
+        run: |
+          test "$(id -u)" = 0
+          sudo apt-get install -y hello
+          hello
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master 2026-11-15

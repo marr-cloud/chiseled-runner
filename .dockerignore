@@ -3,4 +3,5 @@
 !cmd/
 !slices/
 !packages/
+!full/
 cmd/**/*_test.go

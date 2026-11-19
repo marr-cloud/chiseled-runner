@@ -18,7 +18,7 @@ docker compose up -d --scale runner=3
 | `meitrix8208/chiseled-runner:noble` · `:resolute` | Runner + bash, coreutils, git, curl, jq, tar, xz/zstd/bzip2, zip, awk, diff/patch |
 | `meitrix8208/chiseled-runner:noble-docker` · `:resolute-docker` | Same + docker CLI with buildx and compose (host socket) |
 | `meitrix8208/chiseled-runner:noble-build` · `:resolute-build` | Same as `noble` + a C toolchain (gcc, binutils, libc headers, make): Rust crates, cgo, `go test -race` |
-| `meitrix8208/chiseled-runner:noble-full` · `:resolute-full` | Not chiselled: plain Ubuntu with apt, build-essential (C and C++), pkg-config, python3 and the docker CLI. Same `ghr` and uid 1001, no sudo. For jobs the others cannot serve, and as a base for `RUN apt-get install` |
+| `meitrix8208/chiseled-runner:noble-full` · `:resolute-full` | Not chiselled: plain Ubuntu with apt, build-essential (C and C++), pkg-config, python3 and the docker CLI. Same `ghr` and uid 1001; with `RUN_AS_ROOT=true`, workflows' `sudo apt-get install` works as on myoung34. For jobs the others cannot serve, and as a base for `RUN apt-get install` |
 
 Documentation lives in [`docs/`](docs/Home.md) and is published to the wiki: [configuration](docs/Configuration.md), [authentication](docs/Authentication.md), [scaling](docs/Scaling.md), [Docker jobs](docs/Docker-jobs.md), [security](docs/Security.md), [architecture](docs/Architecture.md), [migrating from myoung34](docs/Migrating-from-myoung34.md).
 
