@@ -107,7 +107,7 @@ jobs:
 
       # Build for the runner's own architecture first and test that image.
       - name: Build (amd64, for tests)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: ${{ matrix.target }}
@@ -181,7 +181,7 @@ jobs:
       - name: Publish (multi-arch, with SBOM and provenance)
         if: env.PUBLISH == 'true'
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: ${{ matrix.target }}
