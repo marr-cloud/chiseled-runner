@@ -35,6 +35,9 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test -race -count=1 ./...
+      # Some tests need root (ghr drops to the runner user when started as root).
+      - name: go test (as root)
+        run: sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" go test -race -count=1 ./...
       - name: gofmt
         run: test -z "$(gofmt -l .)"
 
@@ -132,7 +135,10 @@ jobs:
           set -euxo pipefail
           docker run --rm "$IMG" --version
           # Config resolution, with no network or GitHub involved:
-          docker run --rm -e REPO_URL=https://github.com/o/r -e ACCESS_TOKEN=x "$IMG" --dry-run
+          docker run --rm -e REPO_URL=https://github.com/o/r -e ACCESS_TOKEN=x "$IMG" --dry-run | tee dry-run.txt
+          # Starts as root and runs the runner (and jobs) as 1001, so jobs cannot
+          # read the credentials in /proc/<pid>/environ of root's processes:
+          grep -q 'runner_user=1001 ' dry-run.txt
           # The .NET runtime, ICU and OpenSSL all load from the chiselled rootfs:
           docker run --rm --entrypoint /actions-runner/bin/Runner.Listener "$IMG" --version
           # Bundled Node for JavaScript actions:
@@ -142,6 +148,8 @@ jobs:
           # Tools, DNS and TLS trust:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'git --version; curl --version | head -1; jq --version; tar --version | head -1; sh -c "echo sh ok"; curl -fsS -o /dev/null -w "%{http_code} %{ssl_verify_result}\n" https://github.com; git ls-remote https://github.com/actions/runner HEAD'
+          # No setuid/setgid binaries:
+          docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec 'test -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null)" && echo "no setuid binaries"'
           # actions/checkout runs `git submodule foreach` on every checkout:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'cd /tmp && git init -q t && cd t && git submodule foreach true && echo "git submodule ok"'

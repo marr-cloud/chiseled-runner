@@ -12,9 +12,9 @@
 
 **`docker: permission denied` in a job.** `DOCKER_GID` does not match the socket's group. Check `stat -c %g /var/run/docker.sock`.
 
-**`create workdir ... permission denied`, container restarting.** The work directory's parent is not writable by uid 1001, usually a bind mount Docker created as root. The log's `hint` gives the exact `install -d` command to run on the host.
+**`jobs ... can read the registration credentials` warning.** The container was started as a non-root `user:` or with `RUN_AS_ROOT=true`. See [Authentication](Authentication.md#keeping-secrets-away-from-workflows).
 
-**`bind source path does not exist: /tmp/runners`.** Create it first; see [Docker jobs](Docker-jobs.md).
+**`create workdir ... permission denied`, container restarting.** Only when the container does not start as root (a `user:` override): the work directory's parent is not writable by that user, usually a bind mount Docker created as root. Remove the override, or run the `install -d` command the log's `hint` gives on the host.
 
 **Container actions fail to mount the workspace.** The work directory must exist at the same path on the host and in the container; see [Docker jobs](Docker-jobs.md).
 
@@ -25,6 +25,10 @@
 **`Node.js 20 is deprecated ... being forced to run on Node.js 24: <action>`.** Expected: that action declares `node20` and runs on Node 24, which is all github.com allows since 2026-09-23. Update the action to silence it.
 
 **`node20/bin/node: no such file or directory` on GitHub Enterprise Server.** Your GHES version still runs `node20` actions on Node 20, and the image ships only Node 24. Build it with `NODE_VERSIONS="20 24"`; see [Building and extending](Building-and-extending.md).
+
+**`ghr runs as root but was denied` / `cannot start the runner ... operation not permitted`.** The container runs with reduced capabilities (`cap_drop: [ALL]`, a restrictive Kubernetes security context). `ghr` needs `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID` and `KILL` (Docker's defaults include them). On Kubernetes, `runAsNonRoot: true` refuses this image because it starts as root; `runAsUser: 1001` works but lets jobs read the credentials.
+
+**`docker exec` into a runner.** It enters as root now, so files you create under `/actions-runner` or the work directory belong to root. Use `docker exec -u 1001` for anything the runner should own; such a shell also inherits the container's environment, credentials included.
 
 ## Known limitations
 

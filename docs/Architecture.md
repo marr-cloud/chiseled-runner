@@ -2,7 +2,7 @@
 
 ## What `ghr` does
 
-1. Reads its configuration from the environment and validates it. Fails fast with exit code 2 on bad input.
+1. Reads its configuration from the environment and validates it. Fails fast with exit code 2 on bad input. Runs as root; everything it starts runs as uid 1001 (see [Authentication](Authentication.md#keeping-secrets-away-from-workflows)).
 2. Removes stale registration files left in the container's writable layer by a previous run.
 3. Gets a registration token (PAT, or GitHub App JWT then installation token).
 4. Runs `bin/Runner.Listener configure --unattended --replace ...`.

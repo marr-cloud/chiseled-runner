@@ -173,7 +173,7 @@ func TestDescribeHasNoSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(c.describe(), "supersecret") {
+	if strings.Contains(c.describe("1001"), "supersecret") {
 		t.Error("describe() leaks the token")
 	}
 }
@@ -183,7 +183,7 @@ func TestChildEnvScrubsSecrets(t *testing.T) {
 		"PATH=/bin", "ACCESS_TOKEN=a", "RUNNER_TOKEN=b", "APP_ID=1", "APP_LOGIN=x",
 		"APP_PRIVATE_KEY=k", "ACCESS_TOKEN_FILE=/s", "APP_PRIVATE_KEY_FILE=/k", "KEEP=1",
 	}
-	out := strings.Join(childEnv(in, 1000), "\n")
+	out := strings.Join(childEnv(in, false), "\n")
 	for _, bad := range []string{"ACCESS_TOKEN", "RUNNER_TOKEN", "APP_ID", "APP_LOGIN", "APP_PRIVATE_KEY"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("%s survived scrubbing", bad)
@@ -193,10 +193,24 @@ func TestChildEnvScrubsSecrets(t *testing.T) {
 		t.Error("non-secret variables were dropped")
 	}
 	if strings.Contains(out, "RUNNER_ALLOW_RUNASROOT") {
-		t.Error("RUNASROOT set for non-root")
+		t.Error("RUNASROOT set for a non-root runner")
 	}
-	if !strings.Contains(strings.Join(childEnv(in, 0), "\n"), "RUNNER_ALLOW_RUNASROOT=1") {
-		t.Error("RUNASROOT missing for root")
+	if !strings.Contains(strings.Join(childEnv(in, true), "\n"), "RUNNER_ALLOW_RUNASROOT=1") {
+		t.Error("RUNASROOT missing for a root runner")
+	}
+}
+
+func TestRunAsRootConfig(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "true": true, "false": false} {
+		c, err := LoadConfig(testEnv(map[string]string{
+			"REPO_URL": "https://github.com/o/r", "ACCESS_TOKEN": "x", "RUN_AS_ROOT": v,
+		}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.RunAsRoot != want {
+			t.Errorf("RUN_AS_ROOT=%q: RunAsRoot = %t, want %t", v, c.RunAsRoot, want)
+		}
 	}
 }
 

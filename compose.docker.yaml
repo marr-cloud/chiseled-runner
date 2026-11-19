@@ -3,7 +3,6 @@
 # root on the host: only use it with trusted repositories.
 #
 #   export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-#   sudo install -d -o 1001 -g 1001 /tmp/runners
 #   docker compose -f compose.yaml -f compose.docker.yaml up -d --scale runner=4
 services:
   runner:
@@ -17,10 +16,6 @@ services:
       RUNNER_WORKDIR_ROOT: /tmp/runners
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # Must exist and be owned by uid 1001 (see above). Without
-      # create_host_path: false Docker would create it as root, unwritable.
-      - type: bind
-        source: /tmp/runners
-        target: /tmp/runners
-        bind:
-          create_host_path: false
+      # Created by Docker if missing; ghr (root) creates each runner's
+      # subdirectory and hands it to the runner user.
+      - /tmp/runners:/tmp/runners

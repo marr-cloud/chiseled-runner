@@ -11,7 +11,7 @@ docker compose up -d --scale runner=3
 - **Small.** `FROM scratch` plus a [chisel](https://github.com/canonical/chisel)-cut rootfs (~90 MB) and a pruned runner with Node 24 only (the upstream tarball ships 683 MB; the image keeps about 210 MB): about 300 MB uncompressed in total for `noble` (`du -sxm /`).
 - **Scannable.** Unlike a plain chiselled image, trivy/grype/syft see every Ubuntu package, so CVE reports and SBOMs are real.
 - **Scales natively.** Runner names come from the container hostname, so replicas never collide and need no volume or wrapper.
-- **Safer defaults.** Non-root, credentials scrubbed from job environments, checksum-verified runner, SBOM and provenance on release builds.
+- **Safer defaults.** Jobs run as uid 1001 and cannot read the registration credentials (not even in `/proc`; the `-docker` images with the host socket are the exception), checksum-verified runner, SBOM and provenance on release builds.
 
 | Image | |
 |---|---|

@@ -42,6 +42,7 @@ type Supervisor struct {
 	api     *Client
 	log     *slog.Logger
 	environ []string
+	cred    *syscall.Credential // run children as this user; nil keeps ghr's own
 
 	retryDelay time.Duration // wait before relaunching after exit code 2
 	updateWait time.Duration // how long to wait for update.finished after exit 3/4
@@ -51,7 +52,12 @@ type Supervisor struct {
 // Signals received on sigs are forwarded to the runner while it is running.
 func (s *Supervisor) Run(ctx context.Context, sigs <-chan os.Signal) int {
 	cfg := s.cfg
-	if err := os.MkdirAll(cfg.Workdir, 0o755); err != nil {
+	if err := s.makeWorkdir(); err != nil {
+		if errors.Is(err, fs.ErrPermission) && os.Getuid() == 0 {
+			s.log.Error("create workdir", "dir", cfg.Workdir, "err", err,
+				"hint", "ghr runs as root but was denied: the container needs the CHOWN, DAC_OVERRIDE, SETUID, SETGID and KILL capabilities, and the directory must not be on a root_squash NFS mount")
+			return 1
+		}
 		if errors.Is(err, fs.ErrPermission) {
 			// Typically a bind mount that Docker created as root.
 			parent := filepath.Dir(cfg.Workdir)
@@ -140,6 +146,11 @@ func (s *Supervisor) configure(ctx context.Context, sigs <-chan os.Signal, token
 
 	cmd := s.command(cctx, listener, args...)
 	err := cmd.Run()
+	var ee *exec.ExitError
+	if err != nil && !errors.As(err, &ee) {
+		// It never ran: missing binary, or no CAP_SETUID/SETGID to switch users.
+		s.log.Error("cannot start the runner", "cmd", listener, "err", err)
+	}
 	close(stop)
 	<-exited // gotSig is safe to read after this
 	if gotSig {
@@ -258,7 +269,7 @@ func (s *Supervisor) deregister() {
 // it terminates the whole process group so no helper process is orphaned.
 func (s *Supervisor) command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: s.cred}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
 	s.attach(cmd)
@@ -271,10 +282,70 @@ func (s *Supervisor) attach(cmd *exec.Cmd) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = s.environ
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Credential = s.cred
+}
+
+// makeWorkdir creates the work directory and, when children run as another
+// user, hands it to that user (a bind mount Docker created may be root's).
+func (s *Supervisor) makeWorkdir() error {
+	if err := os.MkdirAll(s.cfg.Workdir, 0o755); err != nil {
+		return err
+	}
+	if s.cred == nil {
+		return nil
+	}
+	// The parent (e.g. /_work) belongs to the runner user, so a job may have
+	// left a symlink here. Never follow it as root: chown what we open with
+	// O_NOFOLLOW, and only if it is a real directory.
+	if st, err := os.Lstat(s.cfg.Workdir); err != nil {
+		return err
+	} else if !st.IsDir() {
+		return fmt.Errorf("%s is not a directory (%s); refusing to use it", s.cfg.Workdir, st.Mode().Type())
+	}
+	fd, err := syscall.Open(s.cfg.Workdir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", s.cfg.Workdir, err)
+	}
+	defer syscall.Close(fd)
+	return syscall.Fchown(fd, int(s.cred.Uid), int(s.cred.Gid))
+}
+
+// The image's runner user. Jobs run as this user.
+const (
+	runnerUID = 1001
+	runnerGID = 1001
+)
+
+// runnerCredential decides whom children run as. Started as root, ghr keeps
+// the credentials in root's processes and runs everything else as the runner
+// user: another uid cannot read root's /proc/<pid>/environ. Supplementary
+// groups (e.g. the Docker socket's, from --group-add) carry over. Docker lists
+// root's own group 0 once; only an extra 0 (--group-add 0, for Docker
+// Desktop's root:root socket) is passed on.
+func runnerCredential(uid int, groups []int, runAsRoot bool) *syscall.Credential {
+	if uid != 0 || runAsRoot {
+		return nil
+	}
+	c := &syscall.Credential{Uid: runnerUID, Gid: runnerGID, Groups: []uint32{}}
+	skippedRootGroup := false
+	for _, g := range groups {
+		switch {
+		case g == 0 && !skippedRootGroup:
+			skippedRootGroup = true
+		case g == runnerGID:
+		default:
+			c.Groups = append(c.Groups, uint32(g))
+		}
+	}
+	return c
 }
 
 // childEnv returns environ without secrets, plus what the runner needs.
-func childEnv(environ []string, uid int) []string {
+// childRoot reports that the runner itself will run as root.
+func childEnv(environ []string, childRoot bool) []string {
 	drop := make(map[string]bool)
 	for _, k := range secretEnv {
 		drop[k] = true
@@ -287,7 +358,7 @@ func childEnv(environ []string, uid int) []string {
 			out = append(out, kv)
 		}
 	}
-	if uid == 0 {
+	if childRoot {
 		// The runner refuses to run as root otherwise.
 		out = append(out, "RUNNER_ALLOW_RUNASROOT=1")
 	}
@@ -309,7 +380,7 @@ func exitCode(err error) int {
 }
 
 // describe returns a human summary of the resolved config with no secrets.
-func (c *Config) describe() string {
+func (c *Config) describe(runnerUser string) string {
 	cred := "runner-token"
 	switch {
 	case c.AppID != "":
@@ -318,7 +389,7 @@ func (c *Config) describe() string {
 		cred = "access-token"
 	}
 	return fmt.Sprintf(
-		"scope=%s url=%s api=%s name=%s workdir=%s labels=%q group=%q ephemeral=%t auth=%s command=%q",
-		c.Scope, c.ServerURL, c.APIBase, c.Name, c.Workdir, c.Labels, c.Group, c.Ephemeral, cred, c.Command,
+		"scope=%s url=%s api=%s name=%s workdir=%s labels=%q group=%q ephemeral=%t auth=%s runner_user=%s command=%q",
+		c.Scope, c.ServerURL, c.APIBase, c.Name, c.Workdir, c.Labels, c.Group, c.Ephemeral, cred, runnerUser, c.Command,
 	)
 }

@@ -149,6 +149,8 @@ echo 'runner:x:1001:'                                   >> /rootfs/etc/group
 mkdir -p /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache /rootfs/actions-runner
 chown 1001:1001 /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache /rootfs/actions-runner
 chmod 1777 /rootfs/tmp
+# No setuid/setgid binaries (openssh-client ships ssh-keysign setuid root).
+find /rootfs -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 EOF
 
 # --------------------------------------------------------------- slim ------
@@ -170,7 +172,9 @@ ENV PATH=/usr/local/bin:/usr/bin:/bin \
     AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache \
     RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 
-USER 1001:1001
+# No USER: the container starts as root so that ghr (and docker-init) keep the
+# credentials in root's processes, and ghr runs the runner and every job as
+# uid 1001, which cannot read root's /proc/<pid>/environ.
 WORKDIR /actions-runner
 ENTRYPOINT ["/usr/local/bin/ghr"]
 

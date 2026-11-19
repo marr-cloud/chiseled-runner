@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +55,7 @@ func newSupervisor(t *testing.T, dir string, cfg *Config, srv *httptest.Server, 
 	}
 	client := NewClient(cfg)
 	client.backoff = time.Millisecond
-	env := append(childEnv(os.Environ(), os.Getuid()), "FAKE_LOG="+logDir)
+	env := append(childEnv(os.Environ(), false), "FAKE_LOG="+logDir)
 	return &Supervisor{
 		cfg: cfg, api: client, environ: env,
 		log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
@@ -132,7 +133,7 @@ while true; do sleep 0.05; done`)
 	cfg.Ephemeral = true
 	s := newSupervisor(t, dir, cfg, srv, logDir)
 	// Pretend secrets were in our env: childEnv must have stripped them.
-	s.environ = append(childEnv([]string{"PATH=" + os.Getenv("PATH"), "ACCESS_TOKEN=leak", "APP_PRIVATE_KEY=leak"}, 1000), "FAKE_LOG="+logDir)
+	s.environ = append(childEnv([]string{"PATH=" + os.Getenv("PATH"), "ACCESS_TOKEN=leak", "APP_PRIVATE_KEY=leak"}, false), "FAKE_LOG="+logDir)
 
 	sigs := make(chan os.Signal, 1)
 	codeCh := runAsync(s, sigs)
@@ -390,5 +391,132 @@ func TestCustomCommandRunsOnceAfterRegistration(t *testing.T) {
 	}
 	if strings.TrimSpace(readFile(t, filepath.Join(logDir, "custom"))) != "custom" {
 		t.Error("custom command did not run")
+	}
+}
+
+func TestRunnerCredential(t *testing.T) {
+	cases := []struct {
+		name      string
+		uid       int
+		groups    []int
+		runAsRoot bool
+		want      *syscall.Credential
+	}{
+		{"root drops to the runner user, keeping --group-add groups but not root's own 0", 0, []int{0, 999}, false,
+			&syscall.Credential{Uid: 1001, Gid: 1001, Groups: []uint32{999}}},
+		// Docker lists root's group 0 once, and again for --group-add 0 (Docker
+		// Desktop's socket is root:root), which must reach the runner.
+		{"an explicit --group-add 0 is kept", 0, []int{0, 0}, false,
+			&syscall.Credential{Uid: 1001, Gid: 1001, Groups: []uint32{0}}},
+		{"RUN_AS_ROOT keeps root", 0, []int{0}, true, nil},
+		{"non-root cannot drop", 1001, []int{1001}, false, nil},
+	}
+	for _, c := range cases {
+		got := runnerCredential(c.uid, c.groups, c.runAsRoot)
+		if (got == nil) != (c.want == nil) || (got != nil && (got.Uid != c.want.Uid || got.Gid != c.want.Gid ||
+			fmt.Sprint(got.Groups) != fmt.Sprint(c.want.Groups))) {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// As root, every child (configure, run, remove, ghr -- CMD) runs as the
+// runner user, so it cannot read the credentials in root's environment.
+func TestChildrenRunAsRunnerUserWhenStartedAsRoot(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, `id -u > "$FAKE_LOG/run.uid"`)
+	setListener(t, dir, `
+id -u >> "$FAKE_LOG/uids"
+case "$1" in configure) touch .runner ;; remove) rm -f .runner ;; esac
+`)
+	for _, d := range []string{logDir, dir, filepath.Dir(logDir), filepath.Dir(dir)} {
+		_ = os.Chmod(d, 0o777)
+	}
+	_ = os.Chown(dir, 1001, 1001)
+	srv := apiServer(t)
+	defer srv.Close()
+	cfg := baseCfg()
+	cfg.Workdir = filepath.Join(t.TempDir(), "work", "r-1")
+	_ = os.Chmod(filepath.Dir(filepath.Dir(cfg.Workdir)), 0o777)
+	s := newSupervisor(t, dir, cfg, srv, logDir)
+	s.cred = runnerCredential(0, nil, false)
+
+	if code := s.Run(context.Background(), make(chan os.Signal)); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	uids := strings.Fields(readFile(t, filepath.Join(logDir, "uids")))
+	if len(uids) != 3 { // configure, run, remove
+		t.Fatalf("listener calls = %v", uids)
+	}
+	for _, u := range uids {
+		if u != "1001" {
+			t.Errorf("a listener call ran as uid %s, want 1001", u)
+		}
+	}
+	st, err := os.Stat(cfg.Workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := st.Sys().(*syscall.Stat_t).Uid; owner != 1001 {
+		t.Errorf("workdir owned by uid %d, want 1001", owner)
+	}
+}
+
+// A job owns /_work and can leave a symlink where its work directory was.
+// ghr, as root, must not chown the symlink's target on the next start.
+func TestWorkdirSymlinkIsRefusedAsRoot(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	srv := apiServer(t)
+	defer srv.Close()
+	target := t.TempDir() // root-owned, like /usr/local/bin
+	work := filepath.Join(t.TempDir(), "r-1")
+	if err := os.Symlink(target, work); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseCfg()
+	cfg.Workdir = work
+	s := newSupervisor(t, dir, cfg, srv, logDir)
+	s.cred = runnerCredential(0, nil, false)
+
+	if code := s.Run(context.Background(), make(chan os.Signal)); code == 0 {
+		t.Fatal("Run succeeded with a symlinked work directory")
+	}
+	st, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := st.Sys().(*syscall.Stat_t).Uid; owner != 0 {
+		t.Fatalf("symlink target chowned to uid %d", owner)
+	}
+	if len(callLines(t, logDir)) != 0 {
+		t.Error("the listener ran despite the refused work directory")
+	}
+}
+
+// When the listener cannot even start (missing binary, or no CAP_SETUID to
+// switch users), the reason must be logged, not just "exit 1".
+func TestConfigureStartErrorIsLogged(t *testing.T) {
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	if err := os.Remove(filepath.Join(dir, "bin", "Runner.Listener")); err != nil {
+		t.Fatal(err)
+	}
+	srv := apiServer(t)
+	defer srv.Close()
+	s := newSupervisor(t, dir, baseCfg(), srv, logDir)
+	var buf strings.Builder
+	s.log = slog.New(slog.NewTextHandler(&buf, nil))
+	if code := s.Run(context.Background(), make(chan os.Signal)); code == 0 {
+		t.Fatal("Run succeeded without a listener")
+	}
+	if !strings.Contains(buf.String(), "no such file or directory") {
+		t.Errorf("start error not logged:\n%s", buf.String())
 	}
 }

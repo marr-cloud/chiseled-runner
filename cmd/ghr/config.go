@@ -35,6 +35,7 @@ type Config struct {
 	DisableUpdate   bool
 	NoDefaultLabels bool
 	KeepRegistered  bool // skip automatic deregistration on exit
+	RunAsRoot       bool // run the runner (and jobs) as root instead of the runner user
 
 	RunnerDir string   // where the GitHub runner lives
 	Command   []string // optional: run this once registered instead of the runner
@@ -199,6 +200,7 @@ func LoadConfig(e Env, command []string) (*Config, error) {
 		"DISABLE_AUTO_UPDATE":              &c.DisableUpdate,
 		"NO_DEFAULT_LABELS":                &c.NoDefaultLabels,
 		"DISABLE_AUTOMATIC_DEREGISTRATION": &c.KeepRegistered,
+		"RUN_AS_ROOT":                      &c.RunAsRoot,
 	} {
 		if *dst, err = e.boolean(key); err != nil {
 			return nil, err
