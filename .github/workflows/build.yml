@@ -214,7 +214,7 @@ jobs:
           listening=$(at 'Listening for Jobs'); picked=$(at 'Running job')
           {
             echo "| ${{ matrix.release }} / ${{ matrix.target }} | start to listening: $(secs "$started" "$listening") | listening to job picked up: $(secs "$listening" "$picked") |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$code" = 0 ] && [ "$ok" = yes ]
 
       # Also when the run is cancelled mid-wait (always() steps still run then):
