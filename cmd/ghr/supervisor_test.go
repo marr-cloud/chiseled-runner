@@ -466,15 +466,11 @@ case "$1" in configure) touch .runner ;; remove) rm -f .runner ;; esac
 }
 
 // A job owns /_work and can leave a symlink where its work directory was.
-// ghr, as root, must not chown the symlink's target on the next start.
-func TestWorkdirSymlinkIsRefusedAsRoot(t *testing.T) {
+// ghr, as root, must never chown the symlink's target.
+func TestMakeWorkdirRefusesSymlinkAsRoot(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("needs root")
 	}
-	logDir := t.TempDir()
-	dir := fakeRunner(t, "exit 0")
-	srv := apiServer(t)
-	defer srv.Close()
 	target := t.TempDir() // root-owned, like /usr/local/bin
 	work := filepath.Join(t.TempDir(), "r-1")
 	if err := os.Symlink(target, work); err != nil {
@@ -482,22 +478,59 @@ func TestWorkdirSymlinkIsRefusedAsRoot(t *testing.T) {
 	}
 	cfg := baseCfg()
 	cfg.Workdir = work
+	s := &Supervisor{cfg: cfg, cred: runnerCredential(0, nil, false)}
+	if err := s.makeWorkdir(); err == nil {
+		t.Fatal("makeWorkdir accepted a symlink")
+	}
+	if owner := ownerOf(t, target); owner != 0 {
+		t.Fatalf("symlink target chowned to uid %d", owner)
+	}
+}
+
+// On a full start the planted symlink is removed by the clean start and a
+// real work directory takes its place; the target is untouched.
+func TestPlantedWorkdirSymlinkIsReplacedOnStart(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	for _, d := range []string{logDir, filepath.Dir(logDir), filepath.Dir(dir)} {
+		_ = os.Chmod(d, 0o777)
+	}
+	_ = os.Chmod(dir, 0o1777)
+	target := t.TempDir()
+	work := filepath.Join(t.TempDir(), "r-1")
+	_ = os.Chmod(filepath.Dir(work), 0o777)
+	if err := os.Symlink(target, work); err != nil {
+		t.Fatal(err)
+	}
+	srv := apiServer(t)
+	defer srv.Close()
+	cfg := baseCfg()
+	cfg.Workdir = work
 	s := newSupervisor(t, dir, cfg, srv, logDir)
 	s.cred = runnerCredential(0, nil, false)
 
-	if code := s.Run(context.Background(), make(chan os.Signal)); code == 0 {
-		t.Fatal("Run succeeded with a symlinked work directory")
+	if code := s.Run(context.Background(), make(chan os.Signal)); code != 0 {
+		t.Fatalf("exit code = %d", code)
 	}
-	st, err := os.Stat(target)
+	if owner := ownerOf(t, target); owner != 0 {
+		t.Fatalf("symlink target chowned to uid %d", owner)
+	}
+	st, err := os.Lstat(work)
+	if err != nil || !st.IsDir() || st.Sys().(*syscall.Stat_t).Uid != 1001 {
+		t.Fatalf("work dir is not a real directory owned by 1001: %v %v", st, err)
+	}
+}
+
+func ownerOf(t *testing.T, p string) uint32 {
+	t.Helper()
+	st, err := os.Lstat(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner := st.Sys().(*syscall.Stat_t).Uid; owner != 0 {
-		t.Fatalf("symlink target chowned to uid %d", owner)
-	}
-	if len(callLines(t, logDir)) != 0 {
-		t.Error("the listener ran despite the refused work directory")
-	}
+	return st.Sys().(*syscall.Stat_t).Uid
 }
 
 // When the listener cannot even start (missing binary, or no CAP_SETUID to
@@ -518,5 +551,71 @@ func TestConfigureStartErrorIsLogged(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "no such file or directory") {
 		t.Errorf("start error not logged:\n%s", buf.String())
+	}
+}
+
+// Started as root, ghr wipes what the runner user could write before
+// registering, and keeps the runner from updating itself (it cannot replace
+// its root-owned bin/ anyway).
+func TestCleanStartAsRoot(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	for _, d := range []string{logDir, dir, filepath.Dir(logDir), filepath.Dir(dir)} {
+		_ = os.Chmod(d, 0o777)
+	}
+	_ = os.Chmod(dir, 0o1777) // like the image: root-owned, sticky
+	stale := filepath.Join(t.TempDir(), "home")
+	touch(t, filepath.Join(stale, ".bashrc"))
+	_ = os.Lchown(filepath.Join(stale, ".bashrc"), 1001, 1001) // left by a job
+	touch(t, filepath.Join(dir, ".credentials"))
+	_ = os.Chown(filepath.Join(dir, ".credentials"), 1001, 1001)
+
+	srv := apiServer(t)
+	defer srv.Close()
+	cfg := baseCfg()
+	cfg.Workdir = filepath.Join(t.TempDir(), "r-1")
+	_ = os.Chmod(filepath.Dir(cfg.Workdir), 0o777)
+	s := newSupervisor(t, dir, cfg, srv, logDir)
+	s.cred = runnerCredential(0, nil, false)
+	s.resetRoots = []string{stale}
+
+	if code := s.Run(context.Background(), make(chan os.Signal)); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if exists(filepath.Join(stale, ".bashrc")) {
+		t.Error("previous job's ~/.bashrc survived the restart")
+	}
+	if exists(filepath.Join(dir, ".credentials")) {
+		t.Error("previous registration files survived")
+	}
+	lines := callLines(t, logDir)
+	if len(lines) == 0 || !strings.Contains(lines[0], "--disableupdate") {
+		t.Errorf("configure without --disableupdate: %q", lines)
+	}
+}
+
+// With a non-root start the runner's bin/ (root's in the image) is not
+// writable, so a self-update could only fail and loop: pass --disableupdate.
+func TestDisableUpdateWhenBinIsNotWritable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores permissions")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	if err := os.Chmod(filepath.Join(dir, "bin"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "bin"), 0o755) })
+	srv := apiServer(t)
+	defer srv.Close()
+	s := newSupervisor(t, dir, baseCfg(), srv, logDir)
+	if code := s.Run(context.Background(), make(chan os.Signal)); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if lines := callLines(t, logDir); len(lines) == 0 || !strings.Contains(lines[0], "--disableupdate") {
+		t.Errorf("configure without --disableupdate: %q", lines)
 	}
 }

@@ -33,15 +33,15 @@ Secrets (`ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_PRIVATE_KEY`) also accept a `_FILE
 | `RUNNER_NAME_SUFFIX` | `hostname` | `hostname` (the container id, unique per replica), `random`, or `none` |
 | `LABELS` / `RUNNER_LABELS` | runner defaults | Comma separated, added to `self-hosted,linux,x64` |
 | `RUNNER_GROUP` | `Default` | Org and enterprise scope |
-| `RUNNER_WORKDIR` | | Use exactly this directory |
+| `RUNNER_WORKDIR` | | Use exactly this directory. It is emptied on every start, so `/`, system directories and the runner's directory are refused |
 | `RUNNER_WORKDIR_ROOT` | `/_work` | The work directory is `<root>/<runner name>` |
 
 ## Behaviour (booleans accept `true/false/1/0/yes/no/on/off`)
 
 | Variable | Default | Notes |
 |---|---|---|
-| `EPHEMERAL` | `false` (`true` in `compose.yaml`) | Take one job, then exit. Compose restarts the same container with a new registration (not a clean filesystem; see [Security](Security.md)). Recommended |
-| `DISABLE_AUTO_UPDATE` | `false` | Pass `--disableupdate`. See [Architecture](Architecture.md#self-update) |
+| `EPHEMERAL` | `false` (`true` in `compose.yaml`) | Take one job, then exit. Compose restarts the container with a new registration and a clean filesystem (see [Security](Security.md)). Recommended |
+| `DISABLE_AUTO_UPDATE` | `false` | Pass `--disableupdate`. Always on when the container starts as root (the default): the runner's code is read-only to it. See [Architecture](Architecture.md#self-update) |
 | `NO_DEFAULT_LABELS` | `false` | Do not add `self-hosted`, OS and architecture labels |
 | `DISABLE_AUTOMATIC_DEREGISTRATION` | `false` | Leave the runner registered when the container stops |
 | `GHR_DRY_RUN` | `false` | Print the resolved config and exit |

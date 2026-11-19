@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -191,6 +192,9 @@ func LoadConfig(e Env, command []string) (*Config, error) {
 		}
 		c.Workdir = strings.TrimRight(root, "/") + "/" + c.Name
 	}
+	if err := checkWorkdir(c.Workdir, c.RunnerDir); err != nil {
+		return nil, err
+	}
 	c.Labels = e.first("RUNNER_LABELS", "LABELS")
 	c.Group = e.first("RUNNER_GROUP")
 
@@ -304,4 +308,31 @@ func parseRepoURL(raw string) (owner, repo, host string, err error) {
 		return "", "", "", fmt.Errorf("REPO_URL: %q must look like https://github.com/OWNER/REPO", raw)
 	}
 	return parts[0], strings.TrimSuffix(parts[1], ".git"), u.Host, nil
+}
+
+// systemDirs must never be (inside) the work directory: it is emptied as root
+// on every start.
+var systemDirs = []string{"/usr", "/etc", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/proc", "/sys", "/dev", "/run"}
+
+// checkWorkdir rejects work directories whose emptying on every start would
+// destroy the system or the runner: "/", relative paths, the runner's own
+// directory (or inside it), system directories (or inside them), and any
+// ancestor of those or of /home, /var, /opt, /root.
+func checkWorkdir(dir, runnerDir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("RUNNER_WORKDIR: %q must be an absolute path", dir)
+	}
+	d := filepath.Clean(dir)
+	within := func(p, parent string) bool { return p == parent || strings.HasPrefix(p, parent+"/") }
+	bad := d == "/" || within(d, filepath.Clean(runnerDir)) || within(filepath.Clean(runnerDir), d)
+	for _, s := range systemDirs {
+		bad = bad || within(d, s) || within(s, d)
+	}
+	for _, s := range []string{"/home", "/var", "/opt", "/root"} {
+		bad = bad || within(s, d)
+	}
+	if bad {
+		return fmt.Errorf("RUNNER_WORKDIR: %q cannot be used: the work directory is emptied on every start", dir)
+	}
+	return nil
 }

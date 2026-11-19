@@ -148,6 +148,12 @@ jobs:
           # Tools, DNS and TLS trust:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'git --version; curl --version | head -1; jq --version; tar --version | head -1; sh -c "echo sh ok"; curl -fsS -o /dev/null -w "%{http_code} %{ssl_verify_result}\n" https://github.com; git ls-remote https://github.com/actions/runner HEAD'
+          # The runner's code is root's and read-only to jobs; its directory is sticky:
+          docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
+            test "$(stat -c "%U %a" /actions-runner)" = "root 1777"
+            test -z "$(find /actions-runner -mindepth 1 \( ! -user root -o -perm /022 \))"
+            echo "runner code immutable"'
+          docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -c '! mv /actions-runner/bin /actions-runner/x 2>/dev/null && echo "bin cannot be replaced"'
           # No setuid/setgid binaries:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec 'test -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null)" && echo "no setuid binaries"'
           # actions/checkout runs `git submodule foreach` on every checkout:

@@ -79,7 +79,10 @@ for d in externals/node*; do
 done
 rm -rf externals/node*/lib/node_modules externals/node*/include externals/node*/share \
        externals/node*/bin/npm externals/node*/bin/npx externals/node*/bin/corepack
-chown -R 1001:1001 /actions-runner
+# The runner's code is root's and read-only to the runner user: a job cannot
+# leave a modified Runner.Listener for the next start (see ghr's clean start).
+chown -R 0:0 /actions-runner
+chmod -R go-w /actions-runner
 EOF
 
 # ------------------------------------------------------------- rootfs ------
@@ -144,10 +147,12 @@ test -n "$(ls /rootfs/var/lib/dpkg/status.d)"
 # /bin/sh -> dash comes from dash_bins. Add the unprivileged runner user.
 echo 'runner:x:1001:1001:runner:/home/runner:/bin/bash' >> /rootfs/etc/passwd
 echo 'runner:x:1001:'                                   >> /rootfs/etc/group
-# /actions-runner must exist here: COPY --from creates a missing destination
-# directory as root, and the runner writes _diag/, .runner, ... into it.
 mkdir -p /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache /rootfs/actions-runner
-chown 1001:1001 /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache /rootfs/actions-runner
+chown 1001:1001 /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache
+# /actions-runner: the runner writes .runner, .credentials, _diag/ there, but
+# must not replace bin/ or externals/ (root's). Sticky and world-writable:
+# entries can only be renamed or removed by their owner.
+chmod 1777 /rootfs/actions-runner
 chmod 1777 /rootfs/tmp
 # No setuid/setgid binaries (openssh-client ships ssh-keysign setuid root).
 find /rootfs -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +

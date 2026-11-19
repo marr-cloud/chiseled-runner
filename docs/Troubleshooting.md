@@ -30,8 +30,10 @@
 
 **`docker exec` into a runner.** It enters as root now, so files you create under `/actions-runner` or the work directory belong to root. Use `docker exec -u 1001` for anything the runner should own; such a shell also inherits the container's environment, credentials included.
 
+**Every job downloads its tools again.** `setup-node`, `setup-go`, ... cannot reuse the tool cache from a previous job: it is emptied on every start, because a job could otherwise leave a poisoned tool for the next one. Bake tools you always need into a derived image, owned by root (the default for `COPY`/`RUN` as root): root-owned entries in `/opt/hostedtoolcache` or `/home/runner` survive the clean start, entries owned by the runner user do not. Or mount a volume on `/opt/hostedtoolcache`, accepting that jobs can then poison it for each other (see [Building and extending](Building-and-extending.md)).
+
 ## Known limitations
 
 - On `noble` no Kerberos libraries are included, so Kerberos/NTLM-authenticated proxies are not supported (`resolute` ships them with curl).
-- The runner's self-update path (exit codes 3 and 4) is handled like `run-helper.sh` does, waiting up to 30 seconds for the update script. An update lives only in the container's writable layer and is lost on the next container, so prefer `DISABLE_AUTO_UPDATE=true` with weekly image refreshes.
+- The runner does not update itself (see [Architecture](Architecture.md#self-update)); pull the weekly image instead. A runner that falls too far behind stays online but GitHub stops giving it jobs.
 - `git` has no hook templates (`warning: templates not found` on `git init`); harmless.

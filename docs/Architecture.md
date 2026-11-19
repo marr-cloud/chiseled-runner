@@ -37,15 +37,17 @@ A signal received while the listener runs is forwarded and the listener is *not*
 
 ## Self-update
 
-GitHub requires runners to stay reasonably current, and by default the runner downloads and applies updates itself. In an ephemeral container that is wasted work; the image is rebuilt weekly instead, so `DISABLE_AUTO_UPDATE=true` is a good choice if you keep images fresh. If you leave auto-update on, `ghr` waits for the update to finish and relaunches the runner, as `run.sh` would.
+The runner never updates itself in these images. Its code (`/actions-runner/bin`, `externals`) belongs to root and is read-only to the runner user, so that a job cannot leave a modified runner for the next start; `ghr` therefore always passes `--disableupdate` when it starts as root. Images are rebuilt every week with the latest runner: `docker compose pull && docker compose up -d` updates. GitHub refuses runners that fall too far behind, so do not pin an old image for long.
+
+The code is read-only in every case (it is a property of the image), so `ghr` also passes `--disableupdate` when it does not start as root (`user:` override). With `RUN_AS_ROOT=true` the runner runs as root, could replace `bin/`, and `DISABLE_AUTO_UPDATE` behaves as usual. Without a root start there is no clean start either.
 
 ## Image layout
 
 ```
 /usr/local/bin/ghr          the entrypoint
-/actions-runner             the runner (owned by uid 1001)
+/actions-runner             the runner: root's, sticky (1777); bin/ and externals/ read-only
 /_work                      default work root
-/opt/hostedtoolcache        tool cache for setup-* actions
+/opt/hostedtoolcache        tool cache for setup-* actions (emptied on every start)
 /usr/bin/{bash,git,curl,..} chiselled Ubuntu packages (see slices/)
 /usr/lib/git-core/git-submodule, git-sh-setup, git-sh-i18n
                             from the release's git package: no slice ships
