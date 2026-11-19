@@ -40,8 +40,8 @@ Secrets (`ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_PRIVATE_KEY`) also accept a `_FILE
 
 | Variable | Default | Notes |
 |---|---|---|
-| `EPHEMERAL` | `false` (`true` in `compose.yaml`) | Take one job, then exit. Compose restarts the same container with a new registration (not a clean filesystem; see [Security](Security.md)). Recommended |
-| `DISABLE_AUTO_UPDATE` | `false` | Pass `--disableupdate`. See [Architecture](Architecture.md#self-update) |
+| `EPHEMERAL` | `false` (`true` in `compose.yaml`) | Take one job, then exit. Compose restarts the container with a new registration and a clean filesystem (see [Security](Security.md)). Recommended |
+| `DISABLE_AUTO_UPDATE` | `false` | Pass `--disableupdate`. Always on when the container starts as root (the default): the runner's code is read-only to it. See [Architecture](Architecture.md#self-update) |
 | `NO_DEFAULT_LABELS` | `false` | Do not add `self-hosted`, OS and architecture labels |
 | `DISABLE_AUTOMATIC_DEREGISTRATION` | `false` | Leave the runner registered when the container stops |
 | `GHR_DRY_RUN` | `false` | Print the resolved config and exit |
