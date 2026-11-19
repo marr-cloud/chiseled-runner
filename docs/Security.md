@@ -6,6 +6,7 @@
 - The `ghr` binary strips credentials from the environment before starting the runner (see [Authentication](Authentication.md#keeping-secrets-away-from-workflows)).
 - `EPHEMERAL=true` gives every job a fresh container.
 - Self-hosted runners should not serve public repositories with untrusted pull requests. Anyone who can open a PR can run code on your runner.
+- The CI end-to-end runner of this repository is ephemeral, carries a label unique to one run and variant, is skipped for pull requests from forks, and authenticates with a GitHub App installed only on this repository (see [Building and extending](Building-and-extending.md#end-to-end-check)).
 
 ## Supply chain
 

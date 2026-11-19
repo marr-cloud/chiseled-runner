@@ -24,12 +24,33 @@ Tools come from `slices/<release>.txt`, one chisel slice per line. Find slice na
 
 ## End-to-end check
 
-The CI smoke tests never talk to GitHub. To see a real job run on a local build, register an ephemeral runner with a unique label against a repository you own and push a workflow with `runs-on: [self-hosted, <label>]`:
+Before publishing, CI starts every freshly built amd64 image as an ephemeral runner of this repository and runs a real job on it (the `e2e` job in `build.yml`):
+
+- a JavaScript action that declares `node20`, which must run on Node 24;
+- `hashFiles()`, `actions/setup-node` writing to the tool cache, and `git submodule`;
+- no runner credentials visible to job steps;
+- on `-docker` images: `docker run hello-world` and a bind mount of `$GITHUB_WORKSPACE`.
+
+Publishing requires the job to pass. The step summary reports seconds from container start to "Listening for Jobs" and to the job being picked up.
+
+### Setting it up in a fork or copy
+
+1. Create a GitHub App (no webhook) with the repository permission **Administration: read and write**, and install it only on the repository.
+2. Add the secrets `E2E_APP_ID` and `E2E_APP_PRIVATE_KEY` (the `.pem`), and the variable `E2E_ENABLED=true`.
+
+Without `E2E_ENABLED=true` the e2e parts are skipped and the build behaves as before. They are always skipped for pull requests from forks, which get no secrets.
+
+### When it fails
+
+- **The run ends cancelled, with "`e2e (...)` has no runner and would wait forever".** The image job failed before its runner could take the job (a build or smoke-test failure, or the runner never got online). The real error is in the failed step above that annotation.
+- **Re-running.** Use *Re-run all jobs*. *Re-run failed jobs* re-runs `image` without its `e2e` job, so the new runner waits for nothing and fails after 15 minutes.
+
+### By hand
+
+To see a real job on a local build, register an ephemeral runner with a unique label against a repository you own and push a workflow with `runs-on: [self-hosted, <label>]`:
 
 ```bash
-ACCESS_TOKEN=$(gh auth token) docker run --rm --init -e ACCESS_TOKEN \
-  -e REPO_URL=https://github.com/OWNER/REPO -e LABELS=my-e2e -e EPHEMERAL=true \
-  chiseled-runner:noble
+ACCESS_TOKEN=$(gh auth token) docker run --rm --init -e ACCESS_TOKEN   -e REPO_URL=https://github.com/OWNER/REPO -e LABELS=my-e2e -e EPHEMERAL=true   chiseled-runner:noble
 ```
 
 It takes one job, then removes itself from the repository.
