@@ -124,8 +124,8 @@ func TestLifecycleSignalAndDeregister(t *testing.T) {
 	// `run` records its env, signals readiness, then waits for SIGTERM.
 	dir := fakeRunner(t, `
 env > "$FAKE_LOG/run.env"
-touch "$FAKE_LOG/ready"
 trap 'exit 0' TERM INT
+touch "$FAKE_LOG/ready"
 while true; do sleep 0.05; done`)
 	srv := apiServer(t)
 	defer srv.Close()
