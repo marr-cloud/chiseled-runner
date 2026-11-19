@@ -1,0 +1,39 @@
+# Ubuntu packages (apt) of the -full images, on top of the ubuntu base
+# image. Same tools as the chiselled images, plus what most `ubuntu-latest`
+# recipes assume: a C/C++ toolchain, pkg-config, python3, wget, gnupg.
+# The runner's ICU (libicu74 on noble, libicu78 on resolute) is added by
+# the Dockerfile.
+
+# --- what the .NET runner and the bundled Node need ---
+ca-certificates
+libssl3t64
+zlib1g
+
+# --- shell and tools that workflow steps and common actions expect ---
+curl
+wget
+jq
+git
+openssh-client
+unzip
+zip
+xz-utils
+zstd
+bzip2
+gawk
+patch
+less
+file
+gnupg
+
+# --- libraries actions/setup-python's builds load ---
+libsqlite3-0
+libffi8
+libreadline8t64
+libgdbm6t64
+libgdbm-compat4t64
+
+# --- builds: gcc/g++, make, libc headers, pkg-config; python3 for scripts ---
+build-essential
+pkg-config
+python3

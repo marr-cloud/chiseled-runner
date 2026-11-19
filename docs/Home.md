@@ -29,6 +29,7 @@ Next: [Configuration](Configuration.md) Â· [Authentication](Authentication.md) Â
 | `noble`, `resolute` | Runner, bash, coreutils, git, curl, jq, tar, gzip, xz, zstd, bzip2, zip/unzip, awk (gawk), diff, patch, less, ssh client, CA certificates, and the libraries `actions/setup-python`'s Python needs (sqlite3, ffi, lzma, bz2, readline, ncurses, gdbm, uuid) |
 | `noble-docker`, `resolute-docker` | The above plus the static `docker` CLI with the `buildx` and `compose` plugins, for jobs that use the host's Docker socket |
 | `noble-build`, `resolute-build` | `noble` / `resolute` plus a C toolchain: `gcc`/`cc` (13 on noble, 15 on resolute), binutils (`as`, `ld`, `ar`), libc and Linux headers, `make`. Enough to link Rust programs and crates with C code, build cgo and run `go test -race`. No C++ compiler and no `pkg-config` (Ubuntu has no chisel slices for them yet), and no `-flto` or `-static` linking with gcc (its LTO compiler and static libgcc are not in the slices) |
+| `noble-full`, `resolute-full` | Not chiselled: the plain `ubuntu` image with apt and dpkg, the same runner and `ghr`, and the tools of the tags above plus `build-essential` (gcc and g++), `pkg-config`, `python3`, `wget`, `gnupg`, `file` and the `docker` CLI with `buildx` and `compose`. Jobs still run as uid 1001 with no `sudo` (they cannot `apt-get install`); build your own image `FROM` it to add packages. About 300 MB compressed, against ~120 MB for `noble`, and several hundred packages to scan and patch: see [Security](Security.md) |
 | `<tag>-<runner version>` | Pinned to a runner release, e.g. `noble-2.338.2` |
 | `latest` | Same as `noble` |
 
@@ -36,4 +37,4 @@ Published to `docker.io/meitrix8208/chiseled-runner` and `ghcr.io/marr-cloud/chi
 
 ## What is *not* in the image
 
-There is no `apt`, `sudo`, compiler (except on the `-build` tags), Python or Node on `PATH` (Node for JavaScript actions is bundled inside the runner; `actions/setup-python`, `setup-node`, `setup-go`, `setup-java` and `mise` install their toolchains as usual). That is the point of the image. If your workflows need more, see [Building and extending](Building-and-extending.md).
+Except on the `-full` tags, there is no `apt`, `sudo`, compiler (except on the `-build` tags), Python or Node on `PATH` (Node for JavaScript actions is bundled inside the runner; `actions/setup-python`, `setup-node`, `setup-go`, `setup-java` and `mise` install their toolchains as usual). That is the point of the image. If your workflows need more, see [Building and extending](Building-and-extending.md).
