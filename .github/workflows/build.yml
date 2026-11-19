@@ -137,6 +137,8 @@ jobs:
           docker run --rm --entrypoint /actions-runner/bin/Runner.Listener "$IMG" --version
           # Bundled Node for JavaScript actions:
           docker run --rm --entrypoint /actions-runner/externals/node24/bin/node "$IMG" -e 'console.log(process.version)'
+          # Node 24 only: actions declaring node20 run on it (NODE_VERSIONS in the Dockerfile).
+          docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec 'test ! -e /actions-runner/externals/node20 && echo "node20 not shipped"'
           # Tools, DNS and TLS trust:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'git --version; curl --version | head -1; jq --version; tar --version | head -1; sh -c "echo sh ok"; curl -fsS -o /dev/null -w "%{http_code} %{ssl_verify_result}\n" https://github.com; git ls-remote https://github.com/actions/runner HEAD'

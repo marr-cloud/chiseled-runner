@@ -40,9 +40,11 @@ ARG TARGETARCH
 ARG RUNNER_VERSION
 ARG RUNNER_SHA256_AMD64
 ARG RUNNER_SHA256_ARM64
-# Node versions the runner bundles for JavaScript actions. Dropping "20"
-# saves ~100 MB, but actions that still declare `using: node20` will fail.
-ARG NODE_VERSIONS="20 24"
+# Node versions of the runner's bundle to keep. Node 24 only by default: since
+# 2026-06-16 the runner runs actions that declare `using: node20` on Node 24.
+# "20 24" restores Node 20 (~+100 MB) for workflows that opt back in with
+# ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION.
+ARG NODE_VERSIONS="24"
 RUN <<'EOF'
 set -eu
 test -n "${RUNNER_VERSION}" || { echo "RUNNER_VERSION is required" >&2; exit 1; }
