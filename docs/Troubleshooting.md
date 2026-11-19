@@ -22,6 +22,10 @@
 
 **Zombie processes accumulate.** Run with `init: true` (set in `compose.yaml`) or `docker run --init`.
 
+**`Node.js 20 is deprecated ... being forced to run on Node.js 24: <action>`.** Expected: that action declares `node20` and runs on Node 24, which is all github.com allows since 2026-09-23. Update the action to silence it.
+
+**`node20/bin/node: no such file or directory` on GitHub Enterprise Server.** Your GHES version still runs `node20` actions on Node 20, and the image ships only Node 24. Build it with `NODE_VERSIONS="20 24"`; see [Building and extending](Building-and-extending.md).
+
 ## Known limitations
 
 - On `noble` no Kerberos libraries are included, so Kerberos/NTLM-authenticated proxies are not supported (`resolute` ships them with curl).

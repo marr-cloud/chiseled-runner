@@ -40,12 +40,21 @@ ARG TARGETARCH
 ARG RUNNER_VERSION
 ARG RUNNER_SHA256_AMD64
 ARG RUNNER_SHA256_ARM64
-# Node versions the runner bundles for JavaScript actions. Dropping "20"
-# saves ~100 MB, but actions that still declare `using: node20` will fail.
-ARG NODE_VERSIONS="20 24"
+# Node versions of the runner's bundle to keep. Node 24 only by default: on
+# github.com actions that declare `using: node20` run on Node 24 (required
+# since 2026-09-23; the opt-out is gone). "20 24" restores Node 20 (~+100 MB)
+# for GitHub Enterprise Server versions that still run them on Node 20.
+ARG NODE_VERSIONS="24"
 RUN <<'EOF'
 set -eu
 test -n "${RUNNER_VERSION}" || { echo "RUNNER_VERSION is required" >&2; exit 1; }
+# Runners before 2.338.0 use Node 20 internally (hashFiles(), ...).
+min=2.338.0
+case " ${NODE_VERSIONS} " in *" 20 "*) ;; *)
+  [ "$(printf '%s\n%s\n' "${min}" "${RUNNER_VERSION}" | sort -V | head -1)" = "${min}" ] || {
+    echo "runner ${RUNNER_VERSION} uses Node 20 internally (before ${min}): build with NODE_VERSIONS=\"20 24\"" >&2
+    exit 1; } ;;
+esac
 case "${TARGETARCH}" in
   amd64) arch=x64;   sha="${RUNNER_SHA256_AMD64}" ;;
   arm64) arch=arm64; sha="${RUNNER_SHA256_ARM64}" ;;
