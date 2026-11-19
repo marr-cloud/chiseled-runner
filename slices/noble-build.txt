@@ -1,0 +1,16 @@
+# Extra slices for the `build` target (cut on top of the release's list):
+# a C toolchain, so jobs can link Rust crates, build cgo and run `go test -race`.
+# No C++ (Ubuntu has no g++ slices yet) and no pkg-config.
+
+# manifest, so the build can describe these packages in status.d
+base-files_chisel
+# gcc, cc, as, ld (and libgcc's dev files)
+gcc_gcc
+# ar, ranlib: static libraries (Rust's cc crate, cgo)
+binutils_archiver
+# crt*.o, libc.so linker script, libm, C headers
+libc6-dev_libs
+libc6-dev_headers
+linux-libc-dev_linux-headers
+linux-libc-dev_asm-headers
+make_bins

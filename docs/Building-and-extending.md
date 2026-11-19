@@ -16,7 +16,7 @@ docker buildx build \
   --target slim -t chiseled-runner:noble .
 ```
 
-`--target docker` adds the Docker CLI. Other build arguments: `NODE_VERSIONS` (`"24"`; `"20 24"` brings Node 20 back, about +100 MB, for GitHub Enterprise Server versions that still run `node20` actions on Node 20, and is required to build runners older than 2.338.0), `CHISEL_VERSION`, `GO_IMAGE` and `DOCKER_CLI_IMAGE` (any image reference; by default the Go, Ubuntu and Docker CLI base images are pinned by digest in the `Dockerfile` and Dependabot bumps them), and `UBUNTU_MIRROR` (default `http://archive.ubuntu.com/ubuntu/`): the Ubuntu archive chisel and the build's apt download from, e.g. `http://azure.archive.ubuntu.com/ubuntu/` (what CI uses) or a local mirror. It must be a plain `http://host[:port]/path/` URL: no `https` (the build's apt runs before CA certificates are installed; the signatures below are what protect the packages) and no credentials (build arguments are recorded in the published provenance). chisel still takes arm64 packages from `ports.ubuntu.com`, but on an arm64 build host the build's own apt for `resolute` uses the mirror, so it needs arm64 there. Packages are checked against the archive's signed `InRelease` either way: a mirror cannot alter them, but a stale one can hold back updates, security updates included.
+`--target docker` adds the Docker CLI; `--target build` adds the C toolchain listed in `slices/<release>-build.txt` (cut separately and copied over the slim image; on 24.04 `make` comes from a slice definition the build adds, the same one 26.04 ships, and on both the gcc slice is given `lto-wrapper`, without which Rust's default linker fails). Other build arguments: `NODE_VERSIONS` (`"24"`; `"20 24"` brings Node 20 back, about +100 MB, for GitHub Enterprise Server versions that still run `node20` actions on Node 20, and is required to build runners older than 2.338.0), `CHISEL_VERSION`, `GO_IMAGE` and `DOCKER_CLI_IMAGE` (any image reference; by default the Go, Ubuntu and Docker CLI base images are pinned by digest in the `Dockerfile` and Dependabot bumps them), and `UBUNTU_MIRROR` (default `http://archive.ubuntu.com/ubuntu/`): the Ubuntu archive chisel and the build's apt download from, e.g. `http://azure.archive.ubuntu.com/ubuntu/` (what CI uses) or a local mirror. It must be a plain `http://host[:port]/path/` URL: no `https` (the build's apt runs before CA certificates are installed; the signatures below are what protect the packages) and no credentials (build arguments are recorded in the published provenance). chisel still takes arm64 packages from `ports.ubuntu.com`, but on an arm64 build host the build's own apt for `resolute` uses the mirror, so it needs arm64 there. Packages are checked against the archive's signed `InRelease` either way: a mirror cannot alter them, but a stale one can hold back updates, security updates included.
 
 ## Add tools
 
@@ -65,7 +65,7 @@ It takes one job, then removes itself from the repository.
 
 ## When chisel is not enough
 
-If your jobs need `apt`, `sudo` or a compiler, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
+If your jobs need `apt`, `sudo`, a C++ compiler or `-dev` packages, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
 
 ```dockerfile
 FROM ubuntu:noble

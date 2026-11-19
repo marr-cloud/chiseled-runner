@@ -103,7 +103,7 @@ jobs:
       fail-fast: false
       matrix:
         release: [noble, resolute]
-        target: [slim, docker]
+        target: [slim, docker, build]
     # Runs job code (the e2e runner below), so it holds no publish credentials:
     # publishing is the `publish` job, on another VM.
     permissions:
@@ -118,7 +118,7 @@ jobs:
         id: n
         run: |
           base=${{ matrix.release }}
-          [ "${{ matrix.target }}" = docker ] && base="${base}-docker"
+          [ "${{ matrix.target }}" = slim ] || base="${base}-${{ matrix.target }}"
           echo "local=chiseled-runner:${base}" >> "$GITHUB_OUTPUT"
 
       # Build for the runner's own architecture first and test that image.
@@ -187,6 +187,22 @@ jobs:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
             for l in libsqlite3.so.0 libffi.so.8 liblzma.so.5 libbz2.so.1.0 libzstd.so.1 libreadline.so.8 libncursesw.so.6 libpanelw.so.6 libtinfo.so.6 libgdbm.so.6 libgdbm_compat.so.4 libuuid.so.1; do
               ls /usr/lib/*-linux-gnu/$l >/dev/null || { echo "missing $l"; exit 1; }; done; echo "python libs ok"'
+          if [ "${{ matrix.target }}" = build ]; then
+            # A C toolchain the runner user can use: compile, archive, link, make.
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              cd /tmp
+              echo "#include <math.h>" > f.c
+              echo "int f(double x) { return (int)sqrt(x); }" >> f.c
+              echo "#include <stdio.h>" > m.c
+              echo "int f(double);" >> m.c
+              echo "int main(void) { puts(\"linked\"); return f(1764.0) == 42 ? 0 : 1; }" >> m.c
+              cc -c f.c && ar rcs libf.a f.o && cc -o m m.c -L. -lf -lm && ./m
+              echo ".RECIPEPREFIX = >" > Makefile
+              echo "all:" >> Makefile
+              echo ">@echo make ok" >> Makefile
+              make
+              echo "toolchain ok"'
+          fi
           if [ "${{ matrix.target }}" = docker ]; then
             docker run --rm --entrypoint /usr/local/bin/docker "$IMG" --version
             docker run --rm --user 1001 --entrypoint /usr/local/bin/docker "$IMG" buildx version
@@ -329,7 +345,7 @@ jobs:
       fail-fast: false
       matrix:
         release: [noble, resolute]
-        target: [slim, docker]
+        target: [slim, docker, build]
     runs-on: ["ghr-e2e-${{ needs.resolve.outputs.nonce }}-${{ matrix.release }}-${{ matrix.target }}"]
     timeout-minutes: 15
     permissions:
@@ -357,6 +373,29 @@ jobs:
         run: test -z "${RUNNER_TOKEN:-}${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master 2026-11-15
+        if: matrix.target == 'build'
+        with:
+          toolchain: stable
+      - name: cargo builds and links a crate with C code (cc crate)
+        if: matrix.target == 'build'
+        run: |
+          cargo new -q /tmp/hello && cd /tmp/hello
+          mkdir -p csrc
+          echo 'int forty_one(void) { return 41; }' > csrc/f.c
+          cargo add -q --build cc
+          echo 'fn main() { cc::Build::new().file("csrc/f.c").compile("f"); }' > build.rs
+          echo 'unsafe extern "C" { fn forty_one() -> i32; }' > src/main.rs
+          echo 'fn main() { println!("{}", unsafe { forty_one() } + 1); }' >> src/main.rs
+          test "$(cargo run -q)" = 42 && echo "cargo + cc ok"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: matrix.target == 'build'
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: go test -race (cgo)
+        if: matrix.target == 'build'
+        run: go test -race -count=1 -run 'TestConfig|TestAPIBase' ./cmd/ghr/
       - name: docker jobs use the host daemon
         if: matrix.target == 'docker'
         run: docker run --rm hello-world | grep 'Hello from Docker!'
@@ -398,7 +437,7 @@ jobs:
       fail-fast: false
       matrix:
         release: [noble, resolute]
-        target: [slim, docker]
+        target: [slim, docker, build]
     permissions:
       contents: read
       packages: write
@@ -416,7 +455,7 @@ jobs:
         run: |
           v=${{ needs.resolve.outputs.version }}
           base=${{ matrix.release }}
-          [ "${{ matrix.target }}" = docker ] && base="${base}-docker"
+          [ "${{ matrix.target }}" = slim ] || base="${base}-${{ matrix.target }}"
           {
             echo 'tags<<EOF'
             for img in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
