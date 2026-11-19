@@ -149,6 +149,8 @@ echo 'runner:x:1001:'                                   >> /rootfs/etc/group
 mkdir -p /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache /rootfs/actions-runner
 chown 1001:1001 /rootfs/home/runner /rootfs/_work /rootfs/opt/hostedtoolcache /rootfs/actions-runner
 chmod 1777 /rootfs/tmp
+# No setuid/setgid binaries (openssh-client ships ssh-keysign setuid root).
+find /rootfs -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 EOF
 
 # --------------------------------------------------------------- slim ------

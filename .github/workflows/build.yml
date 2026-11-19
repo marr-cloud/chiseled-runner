@@ -148,6 +148,8 @@ jobs:
           # Tools, DNS and TLS trust:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'git --version; curl --version | head -1; jq --version; tar --version | head -1; sh -c "echo sh ok"; curl -fsS -o /dev/null -w "%{http_code} %{ssl_verify_result}\n" https://github.com; git ls-remote https://github.com/actions/runner HEAD'
+          # No setuid/setgid binaries:
+          docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec 'test -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null)" && echo "no setuid binaries"'
           # actions/checkout runs `git submodule foreach` on every checkout:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'cd /tmp && git init -q t && cd t && git submodule foreach true && echo "git submodule ok"'

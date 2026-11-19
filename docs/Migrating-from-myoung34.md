@@ -8,7 +8,7 @@ Most variables carry over. These differences matter:
 | `RANDOM_RUNNER_SUFFIX` | `RUNNER_NAME_SUFFIX=random\|hostname\|none`. `RANDOM_RUNNER_SUFFIX=true` is still read as `random` |
 | `EPHEMERAL=false` turned it **on** (any non-empty value did) | Real booleans: `false` is false |
 | `LABELS` defaulted to `default` | No default; the runner's own defaults apply |
-| `RUN_AS_ROOT=true` by default | Jobs run as uid 1001. `RUN_AS_ROOT=true` runs them as root, which also lets them read the runner's credentials |
+| `RUN_AS_ROOT=true` by default | Jobs run as uid 1001. `RUN_AS_ROOT=true` runs them as root, which also lets them read the registration credentials |
 | `START_DOCKER_SERVICE` | Removed: there is no dockerd in the image. Mount the host socket ([Docker jobs](Docker-jobs.md)) or run a DinD sidecar |
 | `UNSET_CONFIG_VARS` | Removed: credentials are always scrubbed |
 | `CONFIGURED_ACTIONS_RUNNER_FILES_DIR` (runner reuse) | Removed. Use `EPHEMERAL=true` |

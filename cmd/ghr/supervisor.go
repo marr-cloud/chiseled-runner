@@ -53,6 +53,11 @@ type Supervisor struct {
 func (s *Supervisor) Run(ctx context.Context, sigs <-chan os.Signal) int {
 	cfg := s.cfg
 	if err := s.makeWorkdir(); err != nil {
+		if errors.Is(err, fs.ErrPermission) && os.Getuid() == 0 {
+			s.log.Error("create workdir", "dir", cfg.Workdir, "err", err,
+				"hint", "ghr runs as root but was denied: the container needs the CHOWN, DAC_OVERRIDE, SETUID, SETGID and KILL capabilities, and the directory must not be on a root_squash NFS mount")
+			return 1
+		}
 		if errors.Is(err, fs.ErrPermission) {
 			// Typically a bind mount that Docker created as root.
 			parent := filepath.Dir(cfg.Workdir)
@@ -141,6 +146,11 @@ func (s *Supervisor) configure(ctx context.Context, sigs <-chan os.Signal, token
 
 	cmd := s.command(cctx, listener, args...)
 	err := cmd.Run()
+	var ee *exec.ExitError
+	if err != nil && !errors.As(err, &ee) {
+		// It never ran: missing binary, or no CAP_SETUID/SETGID to switch users.
+		s.log.Error("cannot start the runner", "cmd", listener, "err", err)
+	}
 	close(stop)
 	<-exited // gotSig is safe to read after this
 	if gotSig {
@@ -284,10 +294,23 @@ func (s *Supervisor) makeWorkdir() error {
 	if err := os.MkdirAll(s.cfg.Workdir, 0o755); err != nil {
 		return err
 	}
-	if s.cred != nil {
-		return os.Chown(s.cfg.Workdir, int(s.cred.Uid), int(s.cred.Gid))
+	if s.cred == nil {
+		return nil
 	}
-	return nil
+	// The parent (e.g. /_work) belongs to the runner user, so a job may have
+	// left a symlink here. Never follow it as root: chown what we open with
+	// O_NOFOLLOW, and only if it is a real directory.
+	if st, err := os.Lstat(s.cfg.Workdir); err != nil {
+		return err
+	} else if !st.IsDir() {
+		return fmt.Errorf("%s is not a directory (%s); refusing to use it", s.cfg.Workdir, st.Mode().Type())
+	}
+	fd, err := syscall.Open(s.cfg.Workdir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", s.cfg.Workdir, err)
+	}
+	defer syscall.Close(fd)
+	return syscall.Fchown(fd, int(s.cred.Uid), int(s.cred.Gid))
 }
 
 // The image's runner user. Jobs run as this user.

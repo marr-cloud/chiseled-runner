@@ -74,7 +74,7 @@ parse:
 		return 0
 	}
 	if cred == nil {
-		log.Warn("jobs run as the same user as ghr and can read the runner's credentials from /proc; start the container as root (the image default) unless you set RUN_AS_ROOT on purpose",
+		log.Warn("jobs run as the same user as ghr and can read the registration credentials from /proc; start the container as root (the image default) unless you set RUN_AS_ROOT on purpose",
 			"runner_user", runnerUser)
 	}
 	if os.Getpid() == 1 {

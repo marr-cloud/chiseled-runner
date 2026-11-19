@@ -16,6 +16,6 @@ The override does four things:
 
 Docker creates `/tmp/runners` if it is missing. `ghr` starts as root, creates each runner's subdirectory and gives it to uid 1001, so no preparation is needed.
 
-> **The Docker socket is root on the host.** Anything that can run a job can take over the machine. Use it only for repositories you trust, on dedicated hosts. For untrusted code, use rootless Docker or a Docker-in-Docker sidecar per runner instead.
+> **The Docker socket is root on the host.** Anything that can run a job can take over the machine, and read the runner's registration credentials with `docker inspect`. Use it only for repositories you trust, on dedicated hosts. For untrusted code, use rootless Docker or a Docker-in-Docker sidecar per runner instead.
 
 Docker Desktop (macOS/Windows) exposes the socket as `root:root` with mode `660` inside its VM, so use `DOCKER_GID=0`. Check with `docker run --rm -v /var/run/docker.sock:/s busybox stat -c %g /s`.

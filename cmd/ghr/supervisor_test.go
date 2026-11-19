@@ -464,3 +464,59 @@ case "$1" in configure) touch .runner ;; remove) rm -f .runner ;; esac
 		t.Errorf("workdir owned by uid %d, want 1001", owner)
 	}
 }
+
+// A job owns /_work and can leave a symlink where its work directory was.
+// ghr, as root, must not chown the symlink's target on the next start.
+func TestWorkdirSymlinkIsRefusedAsRoot(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	srv := apiServer(t)
+	defer srv.Close()
+	target := t.TempDir() // root-owned, like /usr/local/bin
+	work := filepath.Join(t.TempDir(), "r-1")
+	if err := os.Symlink(target, work); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseCfg()
+	cfg.Workdir = work
+	s := newSupervisor(t, dir, cfg, srv, logDir)
+	s.cred = runnerCredential(0, nil, false)
+
+	if code := s.Run(context.Background(), make(chan os.Signal)); code == 0 {
+		t.Fatal("Run succeeded with a symlinked work directory")
+	}
+	st, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := st.Sys().(*syscall.Stat_t).Uid; owner != 0 {
+		t.Fatalf("symlink target chowned to uid %d", owner)
+	}
+	if len(callLines(t, logDir)) != 0 {
+		t.Error("the listener ran despite the refused work directory")
+	}
+}
+
+// When the listener cannot even start (missing binary, or no CAP_SETUID to
+// switch users), the reason must be logged, not just "exit 1".
+func TestConfigureStartErrorIsLogged(t *testing.T) {
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	if err := os.Remove(filepath.Join(dir, "bin", "Runner.Listener")); err != nil {
+		t.Fatal(err)
+	}
+	srv := apiServer(t)
+	defer srv.Close()
+	s := newSupervisor(t, dir, baseCfg(), srv, logDir)
+	var buf strings.Builder
+	s.log = slog.New(slog.NewTextHandler(&buf, nil))
+	if code := s.Run(context.Background(), make(chan os.Signal)); code == 0 {
+		t.Fatal("Run succeeded without a listener")
+	}
+	if !strings.Contains(buf.String(), "no such file or directory") {
+		t.Errorf("start error not logged:\n%s", buf.String())
+	}
+}
