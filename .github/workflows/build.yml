@@ -138,6 +138,7 @@ jobs:
           IMG: ${{ steps.n.outputs.local }}
         run: |
           set -euxo pipefail
+          if [ "${{ matrix.release }}-${{ matrix.target }}" = noble-slim ]; then echo 'TEMP: forced failure'; exit 1; fi
           docker run --rm "$IMG" --version
           # Config resolution, with no network or GitHub involved:
           docker run --rm -e REPO_URL=https://github.com/o/r -e ACCESS_TOKEN=x "$IMG" --dry-run | tee dry-run.txt
