@@ -28,21 +28,44 @@ done
 [ $# -gt 0 ] || refuse "usage: sudo [-E] [-H] [-n] [-u root] [--] COMMAND [ARGS...]"
 
 if [ "$(id -u)" = 0 ]; then
-  exec "$@"
+  # env: like sudo, accept VAR=value assignments before the command.
+  exec env "$@"
 fi
+
+# VAR=value assignments (DEBIAN_FRONTEND=noninteractive...) change nothing
+# about what is checked below.
+while [ $# -gt 0 ]; do
+  case "$1" in [A-Za-z_]*=*) shift ;; *) break ;; esac
+done
+[ $# -gt 0 ] || refuse "usage: sudo [-E] [-H] [-n] [-u root] [--] COMMAND [ARGS...]"
 
 case "$1" in
   apt-get | apt)
-    case "${2:-}" in
+    tool=$1
+    shift
+    # Options may come before the subcommand (apt-get -qq update, -y install).
+    # -o, -t and -c take a value as the next argument; their values are not
+    # packages either.
+    sub="" pkgs="" skip=""
+    for arg in "$@"; do
+      if [ -n "$skip" ]; then skip=""; continue; fi
+      case "$arg" in
+        -o | -t | -c | --option | --target-release | --default-release | --config-file) skip=1 ;;
+        -*) ;;
+        *) if [ -z "$sub" ]; then sub=$arg; else pkgs="$pkgs $arg"; fi ;;
+      esac
+    done
+    case "$sub" in
       update)
-        echo "sudo: jobs run as uid $(id -u), not root: skipping '$1 update'" >&2
+        echo "sudo: jobs run as uid $(id -u), not root: skipping '$tool update'" >&2
         exit 0
         ;;
       install)
-        shift 2
         missing="" have=""
+        set -f  # no globbing of package names
+        # shellcheck disable=SC2086 # one word per package
+        set -- $pkgs
         for arg in "$@"; do
-          case "$arg" in -*) continue ;; esac
           pkg=${arg%%=*}
           if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" = "install ok installed" ]; then
             have="$have $pkg"

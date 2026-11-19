@@ -203,9 +203,10 @@ jobs:
               ! ls /var/lib/apt/lists | grep -q azure
               echo "apt ok"'
             # sudo is a shim that never raises privileges. As root
-            # (RUN_AS_ROOT=true) it runs the command, like myoung34's sudo:
+            # (RUN_AS_ROOT=true) it runs the command, like myoung34's sudo,
+            # environment assignments included:
             docker run --rm --user 0 --entrypoint /usr/bin/bash "$IMG" -ec '
-              sudo -E -H apt-get install -y -qq hello >/dev/null
+              sudo -E -H DEBIAN_FRONTEND=noninteractive apt-get install -y -qq hello >/dev/null
               test "$(hello)" = "Hello, world!"
               test "$(sudo -- id -u)" = 0
               test "$(sudo -u root bash -c "echo ok")" = ok
@@ -213,20 +214,29 @@ jobs:
             # As the runner user it cannot install anything...
             docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
               cd /tmp
-              ! sudo apt-get install -y hello 2> err
+              fails() { if "$@" 2>/dev/null; then echo "unexpected success: $*"; exit 1; fi; }
+              fails sudo apt-get install -y hello
+              sudo apt-get -o Dpkg::Options::=--force-confold install -y hello 2> err || true
               grep -q RUN_AS_ROOT=true err
               grep -q FROM err
-              ! sudo id 2>/dev/null
-              ! sudo -u nobody id 2>/dev/null
-              ! sudo -i 2>/dev/null
-              ! apt-get install -y -qq hello 2>/dev/null
+              grep -q "(missing: hello)" err
+              fails sudo id
+              fails sudo -u nobody id
+              fails sudo -i
+              fails sudo DEBIAN_FRONTEND=noninteractive id
+              fails apt-get install -y -qq hello
               echo "sudo as 1001 refuses"'
             # ...but an update, or packages the image already has, pass, so
             # the same workflow runs unchanged on an image built FROM -full:
             docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
               sudo apt-get update
-              sudo apt-get install -y -q --no-install-recommends curl git:amd64 2>&1 | grep -q "already installed"
+              sudo apt-get -qq update
+              out=$(sudo apt-get install -y -q --no-install-recommends curl git:amd64 2>&1)
+              case "$out" in *"already installed"*) ;; *) echo "$out"; exit 1 ;; esac
               sudo apt install -y git=$(dpkg-query -W -f="\${Version}" git)
+              sudo apt-get -y install git
+              sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold -t "$codename" install -y git
               echo "sudo as 1001 passes for installed packages"'
           else
             # Package metadata, so scanners can see the Ubuntu packages:
