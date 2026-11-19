@@ -42,7 +42,7 @@ How the credentials are kept apart:
 ### Setting it up in a fork or copy
 
 1. Create a GitHub App (no webhook) with the repository permission **Administration: read and write**, and install it only on the repository.
-2. Add the secret `E2E_APP_PRIVATE_KEY` (the `.pem`), and the variables `E2E_APP_CLIENT_ID` (the App's Client ID, on its settings page) and `E2E_ENABLED=true`. The older secret `E2E_APP_ID` still works in place of `E2E_APP_CLIENT_ID`.
+2. Add the secret `E2E_APP_PRIVATE_KEY` (the `.pem`), and the variables `E2E_APP_CLIENT_ID` (the App's Client ID, on its settings page) and `E2E_ENABLED=true`.
 
 Without `E2E_ENABLED=true` the e2e parts are skipped and the build behaves as before. They are always skipped for pull requests from forks and from Dependabot, which get no secrets.
 
@@ -65,7 +65,7 @@ It takes one job, then removes itself from the repository.
 
 ## When chisel is not enough
 
-If your jobs need `apt`, `sudo`, compilers or Python, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
+If your jobs need `apt`, `sudo` or a compiler, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
 
 ```dockerfile
 FROM ubuntu:noble

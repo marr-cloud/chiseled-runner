@@ -37,3 +37,26 @@ git_bins
 git_http-support
 openssh-client_bins
 openssh-client_config
+
+# --- archives, awk and text tools that installers and setup-* actions use ---
+xz-utils_bins
+zstd_bins
+bzip2_bins
+zip_bins
+gawk_bins
+diffutils_bins
+patch_bins
+less_bins
+
+# --- libraries actions/setup-python's builds load (sqlite3, ctypes, lzma,
+# bz2, readline, curses, dbm, uuid); tkinter (tcl/tk) is left out ---
+libsqlite3-0_libs
+libffi8_libs
+liblzma5_libs
+libbz2-1.0_libs
+libzstd1_libs
+libreadline8t64_libs
+libncursesw6_libs
+libgdbm6t64_libs
+libgdbm-compat4t64_libs
+libuuid1_libs
