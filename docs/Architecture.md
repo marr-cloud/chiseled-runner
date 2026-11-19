@@ -56,4 +56,4 @@ GitHub requires runners to stay reasonably current, and by default the runner do
 
 The rootfs is assembled in an `ubuntu:<release>` stage on the build platform: chisel downloads and verifies packages for the target architecture, so arm64 images build without emulation.
 
-The runner tarball is 683 MB extracted; the image keeps about 300 MB of it (about 200 MB without Node 20) by dropping the musl/Alpine Node builds, npm and corepack, Node headers, and the shell wrappers.
+The runner tarball is 683 MB extracted; the image keeps about 210 MB of it by dropping Node 20 (actions that declare `node20` run on Node 24), the musl/Alpine Node builds, npm and corepack, Node headers, and the shell wrappers.

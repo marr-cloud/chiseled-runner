@@ -16,7 +16,7 @@ docker buildx build \
   --target slim -t chiseled-runner:noble .
 ```
 
-`--target docker` adds the Docker CLI. Other build arguments: `NODE_VERSIONS` (`"20 24"`; drop `20` to save about 100 MB if none of your actions still use it), `CHISEL_VERSION`, `GO_IMAGE`.
+`--target docker` adds the Docker CLI. Other build arguments: `NODE_VERSIONS` (`"24"`; `"20 24"` brings Node 20 back, about +100 MB, for workflows that set `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`), `CHISEL_VERSION`, `GO_IMAGE`.
 
 ## Add tools
 

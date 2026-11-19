@@ -22,6 +22,8 @@
 
 **Zombie processes accumulate.** Run with `init: true` (set in `compose.yaml`) or `docker run --init`.
 
+**`Node.js 20 is deprecated ... being forced to run on Node.js 24: <action>`.** Expected: that action declares `node20`, and the image ships only Node 24, which the runner uses instead. Update the action to silence it. If a workflow sets `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true` to stay on Node 20, it needs an image built with `NODE_VERSIONS="20 24"`; see [Building and extending](Building-and-extending.md).
+
 ## Known limitations
 
 - On `noble` no Kerberos libraries are included, so Kerberos/NTLM-authenticated proxies are not supported (`resolute` ships them with curl).
