@@ -187,8 +187,10 @@ jobs:
           docker run -d --init --name e2e             -e APP_ID -e APP_PRIVATE_KEY             -e REPO_URL="https://github.com/${{ github.repository }}"             -e LABELS="$LABEL" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true             -e RUNNER_NAME="e2e-${{ matrix.release }}-${{ matrix.target }}"             "$IMG" >/dev/null
           code=$(timeout "$E2E_TIMEOUT" docker wait e2e || echo timeout)
           docker stop -t 60 e2e >/dev/null 2>&1 || true   # SIGTERM: ghr deregisters the runner
-          echo "::group::runner log"; docker logs e2e 2>&1; echo "::endgroup::"
-          ok=no; docker logs e2e 2>&1 | grep -q 'completed with result: Succeeded' && ok=yes
+          docker logs e2e > e2e.log 2>&1
+          echo "::group::runner log"; cat e2e.log; echo "::endgroup::"
+          # grep a file, not a pipe: with pipefail, grep -q closing early fails the pipe.
+          ok=no; grep -q 'completed with result: Succeeded' e2e.log && ok=yes
           docker rm e2e >/dev/null
           echo "runner exit: $code, job succeeded: $ok"
           [ "$code" = 0 ] && [ "$ok" = yes ]
