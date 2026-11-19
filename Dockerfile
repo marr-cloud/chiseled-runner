@@ -33,7 +33,7 @@ ARG CHISEL_VERSION=v1.5.1
 # chisel hardcodes the Ubuntu archive URL. Build it from the module proxy's
 # source (checked against the Go checksum database) with that one constant
 # pointed at UBUNTU_MIRROR. Package integrity is unchanged: chisel verifies
-# the archive's signed InRelease with the Ubuntu keys it embeds.
+# the archive's signed InRelease against the keys in chisel-releases.
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
 RUN <<'EOF'
 set -eu
