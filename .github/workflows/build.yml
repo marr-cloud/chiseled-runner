@@ -122,7 +122,7 @@ jobs:
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
             RUNNER_VERSION=${{ needs.resolve.outputs.version }}
-            RUNNER_SHA256_AMD64=0000000000000000000000000000000000000000000000000000000000000000   # TEMP negative test
+            RUNNER_SHA256_AMD64=${{ needs.resolve.outputs.sha_amd64 }}
             RUNNER_SHA256_ARM64=${{ needs.resolve.outputs.sha_arm64 }}
             VERSION=${{ github.sha }}
 
@@ -202,11 +202,19 @@ jobs:
             "$IMG" >/dev/null
           code=$(timeout "$E2E_TIMEOUT" docker wait e2e || echo timeout)
           docker stop -t 60 e2e >/dev/null 2>&1 || true   # SIGTERM: ghr deregisters the runner
-          docker logs e2e > e2e.log 2>&1
+          docker logs -t e2e > e2e.log 2>&1
           echo "::group::runner log"; cat e2e.log; echo "::endgroup::"
           # grep a file, not a pipe: with pipefail, grep -q closing early fails the pipe.
           ok=no; grep -q 'completed with result: Succeeded' e2e.log && ok=yes
           echo "runner exit: $code, job succeeded: $ok"
+          # Startup on a Linux host: container start -> listening -> job picked up.
+          at() { grep -m1 "$1" e2e.log | cut -d' ' -f1; }
+          secs() { [ -n "$1" ] && [ -n "$2" ] && echo "$(( $(date -d "$2" +%s%3N) - $(date -d "$1" +%s%3N) ))" | awk '{printf "%.1f s", $1/1000}' || echo "-"; }
+          started=$(docker inspect -f '{{.State.StartedAt}}' e2e)
+          listening=$(at 'Listening for Jobs'); picked=$(at 'Running job')
+          {
+            echo "| ${{ matrix.release }} / ${{ matrix.target }} | start to listening: $(secs "$started" "$listening") | listening to job picked up: $(secs "$listening" "$picked") |"
+          } >> "$GITHUB_STEP_SUMMARY"
           [ "$code" = 0 ] && [ "$ok" = yes ]
 
       # Also when the run is cancelled mid-wait (always() steps still run then):
