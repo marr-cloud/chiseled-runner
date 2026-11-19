@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: go vet ./...
+      - run: go vet ./... && exit 1
       - run: go test -race -count=1 ./...
       # Some tests need root (ghr drops to the runner user when started as root).
       - name: go test (as root)
