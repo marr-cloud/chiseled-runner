@@ -185,16 +185,31 @@ jobs:
           if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
             echo "::error::E2E_ENABLED is true but the E2E_APP_ID / E2E_APP_PRIVATE_KEY secrets are empty"; exit 1
           fi
-          docker run -d --init --name e2e             -e APP_ID -e APP_PRIVATE_KEY             -e REPO_URL="https://github.com/${{ github.repository }}"             -e LABELS="$LABEL-wrong" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true             -e RUNNER_NAME="e2e-${{ matrix.release }}-${{ matrix.target }}"             "$IMG" >/dev/null
+          docker run -d --init --name e2e \
+            -e APP_ID -e APP_PRIVATE_KEY \
+            -e REPO_URL="https://github.com/${{ github.repository }}" \
+            -e LABELS="$LABEL-wrong" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true \
+            -e RUNNER_NAME="e2e-${{ matrix.release }}-${{ matrix.target }}" \
+            "$IMG" >/dev/null
           code=$(timeout "$E2E_TIMEOUT" docker wait e2e || echo timeout)
           docker stop -t 60 e2e >/dev/null 2>&1 || true   # SIGTERM: ghr deregisters the runner
           docker logs e2e > e2e.log 2>&1
           echo "::group::runner log"; cat e2e.log; echo "::endgroup::"
           # grep a file, not a pipe: with pipefail, grep -q closing early fails the pipe.
           ok=no; grep -q 'completed with result: Succeeded' e2e.log && ok=yes
-          docker rm e2e >/dev/null
           echo "runner exit: $code, job succeeded: $ok"
           [ "$code" = 0 ] && [ "$ok" = yes ]
+
+      # Also when the run is cancelled mid-wait (always() steps still run then):
+      # stopping the container is what deregisters the runner from the repository.
+      - name: Stop the e2e runner
+        if: always()
+        run: |
+          if docker inspect e2e >/dev/null 2>&1; then
+            docker stop -t 60 e2e >/dev/null 2>&1 || true
+            docker logs --tail 5 e2e 2>&1 || true
+            docker rm -f e2e >/dev/null
+          fi
 
       - name: Log in to Docker Hub
         if: env.PUBLISH == 'true'
@@ -239,13 +254,22 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      # If this job fails or is cancelled before its runner took the e2e job, that
-      # job would wait for a runner forever. Cancel the whole run instead.
-      - name: Cancel the run if the e2e job can no longer run
-        if: (failure() || cancelled()) && vars.E2E_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      # If this job failed before its runner took this variant's e2e job, that job
+      # would wait for a runner forever: cancel the run. Only then, so that an
+      # ordinary failure (e2e failed, publish failed) stays a failure.
+      - name: Cancel the run if this variant's e2e job can no longer run
+        if: failure() && vars.E2E_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+          JOB: e2e (${{ matrix.release }}, ${{ matrix.target }})
+        run: |
+          status=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.name == \"$JOB\") | .status")
+          echo "$JOB: ${status:-not found}"
+          case "$status" in queued|waiting|pending)
+            echo "::error::$JOB has no runner and would wait forever; cancelling the run"
+            gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" ;;
+          esac
 
   # Runs on the runner that the `image` job starts from the image it just built.
   # Queued from the start; the label is unique to this run, attempt and variant.
