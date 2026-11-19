@@ -1,0 +1,28 @@
+name: e2e (local runner)
+# Temporary: taken by a locally started runner labelled ghr-e2e. Removed before merge.
+on:
+  push:
+    branches: [feat/drop-node20]
+    paths: ['.github/workflows/e2e-local.yml']
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: [self-hosted, ghr-e2e]
+    steps:
+      - name: node20 action (checkout v4)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: node24 action (checkout v7, creds in a separate file)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: v7
+      - name: hashFiles uses the runner's internal Node
+        run: |
+          h='${{ hashFiles('go.mod') }}'
+          echo "hash=$h"; test -n "$h"
+      - name: no Node 20 in the image
+        run: test ! -e /actions-runner/externals/node20 && ls /actions-runner/externals
+      - name: git works with checkout v7 credentials
+        run: git -C v7 fetch --depth 1 origin && echo "v7 fetch ok"
