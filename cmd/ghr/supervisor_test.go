@@ -120,11 +120,13 @@ func waitFor(t *testing.T, path string) {
 
 func TestLifecycleSignalAndDeregister(t *testing.T) {
 	logDir := t.TempDir()
-	// `run` records its env, signals readiness, then waits for SIGTERM.
+	// `run` records its env, traps SIGTERM, then signals readiness and waits.
+	// The trap must come before `ready`: a SIGTERM sent in between would kill
+	// the shell (exit 143) instead of letting it exit 0.
 	dir := fakeRunner(t, `
 env > "$FAKE_LOG/run.env"
-touch "$FAKE_LOG/ready"
 trap 'exit 0' TERM INT
+touch "$FAKE_LOG/ready"
 while true; do sleep 0.05; done`)
 	srv := apiServer(t)
 	defer srv.Close()
