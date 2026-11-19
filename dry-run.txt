@@ -1,0 +1,1 @@
+scope=repo url=https://github.com/o/r api=https://api.github.com name=gh-runner-593a2dce80fe workdir=/_work/gh-runner-593a2dce80fe labels="" group="" ephemeral=false auth=access-token runner_user=1001 command=[]

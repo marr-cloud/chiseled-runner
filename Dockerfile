@@ -8,8 +8,10 @@
 # Targets:  slim    runner + shell + git/curl/jq/tar/xz/awk... (default)
 #           docker  slim + the static docker CLI, for jobs that use the host's socket.
 #           build   slim + a C toolchain (gcc, binutils, libc headers, make).
+#           full    plain Ubuntu with apt: the same runner and ghr, the docker
+#                   CLI, build-essential... for jobs chisel cannot serve.
 #
-# The final image is built FROM scratch from a rootfs cut with chisel
+# slim, docker and build are built FROM scratch from a rootfs cut with chisel
 # (https://github.com/canonical/chisel): no apt, no dpkg, no package manager.
 
 ARG UBUNTU_RELEASE=noble
@@ -24,6 +26,9 @@ ARG DOCKER_CLI_IMAGE=docker-cli-base
 FROM --platform=$BUILDPLATFORM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS go-base
 FROM --platform=$BUILDPLATFORM ubuntu:noble@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8 AS ubuntu-noble
 FROM --platform=$BUILDPLATFORM ubuntu:resolute@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db AS ubuntu-resolute
+# The same images for the target platform: the base of the `full` target.
+FROM ubuntu:noble@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8 AS ubuntu-noble-target
+FROM ubuntu:resolute@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db AS ubuntu-resolute-target
 FROM docker:29-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli-base
 
 # ---------------------------------------------------------------- ghr ------
@@ -373,6 +378,75 @@ COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/l
 # -------------------------------------------------------------- build ------
 FROM slim AS build
 COPY --from=toolchain /toolchain/ /
+
+# --------------------------------------------------------------- full ------
+# Plain Ubuntu, for jobs that need apt packages, a C++ compiler, -dev
+# libraries... and for images that extend it with `RUN apt-get install`.
+# The security model is the slim image's: the container starts as root, ghr
+# runs the runner and every job as uid 1001, there is no sudo and no setuid
+# binary, and the runner's code is root's and read-only. What it gives up is
+# size and a far larger package set to scan and patch (docs/Security.md).
+# Runs on the target platform: apt installs under emulation for arm64.
+FROM ubuntu-${UBUNTU_RELEASE}-target AS full
+ARG UBUNTU_RELEASE
+ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
+# See the rootfs stage: redo the install when the archive changes.
+ARG UBUNTU_ARCHIVE_STATE=
+ARG VERSION=dev
+ARG RUNNER_VERSION
+LABEL org.opencontainers.image.title="chiseled-runner" \
+      org.opencontainers.image.description="GitHub Actions self-hosted runner on Ubuntu, with apt (the -full variant of chiseled-runner)" \
+      org.opencontainers.image.source="https://github.com/marr-cloud/chiseled-runner" \
+      org.opencontainers.image.version="${VERSION}" \
+      io.github.actions-runner.version="${RUNNER_VERSION}"
+COPY packages/full.txt /tmp/packages.txt
+RUN <<'EOF'
+set -eu
+case "${UBUNTU_RELEASE}" in
+  noble)    icu=libicu74 ;;
+  resolute) icu=libicu78 ;;
+  *) echo "UBUNTU_RELEASE must be noble or resolute" >&2; exit 1 ;;
+esac
+# UBUNTU_MIRROR for this build only (same guard as the rootfs stage): the
+# image keeps Ubuntu's own sources for `apt-get` in images built FROM it.
+src=/etc/apt/sources.list.d/ubuntu.sources
+cp "${src}" /tmp/ubuntu.sources
+if grep -q 'archive\.ubuntu\.com' "${src}"; then
+  sed -i "s|http://archive.ubuntu.com/ubuntu/\?|${UBUNTU_MIRROR}|" "${src}"
+  grep -qF "URIs: ${UBUNTU_MIRROR}" "${src}" || {
+    echo "could not point ${src} at ${UBUNTU_MIRROR}; update the rewrite" >&2; exit 1; }
+fi
+echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries
+apt-get update -qq
+# shellcheck disable=SC2046 # one argument per package
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+  "${icu}" $(grep -v '^[[:space:]]*#' /tmp/packages.txt | grep -v '^[[:space:]]*$') >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq >/dev/null
+mv /tmp/ubuntu.sources "${src}"
+apt-get clean
+rm -rf /var/lib/apt/lists/* /tmp/packages.txt
+
+# The runner user (uid and gid 1001, like the slim image) and its directories.
+groupadd -g 1001 runner
+useradd -u 1001 -g 1001 -m -d /home/runner -s /bin/bash runner
+mkdir -p /_work /opt/hostedtoolcache /actions-runner
+chown 1001:1001 /_work /opt/hostedtoolcache
+chmod 1777 /actions-runner
+# No setuid/setgid binaries (su, passwd, mount, ssh-keysign...): a job cannot
+# get root back. Packages installed later in a derived image may add some.
+find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
+EOF
+COPY --from=ghr    /out/ghr /usr/local/bin/ghr
+COPY --from=runner /actions-runner /actions-runner
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/
+ENV HOME=/home/runner \
+    LANG=C.UTF-8 \
+    AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache \
+    RUNNER_TOOL_CACHE=/opt/hostedtoolcache
+# No USER, as in the slim image.
+WORKDIR /actions-runner
+ENTRYPOINT ["/usr/local/bin/ghr"]
 
 # The default target is the last stage, so keep `slim` last.
 FROM slim

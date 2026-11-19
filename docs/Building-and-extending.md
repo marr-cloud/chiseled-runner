@@ -16,7 +16,7 @@ docker buildx build \
   --target slim -t chiseled-runner:noble .
 ```
 
-`--target docker` adds the Docker CLI; `--target build` adds the C toolchain listed in `slices/<release>-build.txt` (cut separately and copied over the slim image; on 24.04 `make` comes from a slice definition the build adds, the same one 26.04 ships, and on both the gcc slice is given `lto-wrapper`, without which Rust's default linker fails). Other build arguments: `NODE_VERSIONS` (`"24"`; `"20 24"` brings Node 20 back, about +100 MB, for GitHub Enterprise Server versions that still run `node20` actions on Node 20, and is required to build runners older than 2.338.0), `CHISEL_VERSION`, `GO_IMAGE` and `DOCKER_CLI_IMAGE` (any image reference; by default the Go, Ubuntu and Docker CLI base images are pinned by digest in the `Dockerfile` and Dependabot bumps them), and `UBUNTU_MIRROR` (default `http://archive.ubuntu.com/ubuntu/`): the Ubuntu archive chisel and the build's apt download from, e.g. `http://azure.archive.ubuntu.com/ubuntu/` (what CI uses) or a local mirror. It must be a plain `http://host[:port]/path/` URL: no `https` (the build's apt runs before CA certificates are installed; the signatures below are what protect the packages) and no credentials (build arguments are recorded in the published provenance). chisel still takes arm64 packages from `ports.ubuntu.com`, but on an arm64 build host the build's own apt for `resolute` uses the mirror, so it needs arm64 there. Packages are checked against the archive's signed `InRelease` either way: a mirror cannot alter them, but a stale one can hold back updates, security updates included. `UBUNTU_ARCHIVE_STATE` is any string that identifies the archive's state: when it changes, the package cut is redone instead of coming from the build cache. CI passes a hash of the suites' `InRelease` dates, so a build picks up Ubuntu's updates as soon as they are published and still reuses the cache while nothing changed; with a long-lived local cache, pass something like `$(date +%F)`.
+`--target docker` adds the Docker CLI; `--target full` is plain Ubuntu with the packages in `packages/full.txt` (see [below](#when-chisel-is-not-enough)); `--target build` adds the C toolchain listed in `slices/<release>-build.txt` (cut separately and copied over the slim image; on 24.04 `make` comes from a slice definition the build adds, the same one 26.04 ships, and on both the gcc slice is given `lto-wrapper`, without which Rust's default linker fails). Other build arguments: `NODE_VERSIONS` (`"24"`; `"20 24"` brings Node 20 back, about +100 MB, for GitHub Enterprise Server versions that still run `node20` actions on Node 20, and is required to build runners older than 2.338.0), `CHISEL_VERSION`, `GO_IMAGE` and `DOCKER_CLI_IMAGE` (any image reference; by default the Go, Ubuntu and Docker CLI base images are pinned by digest in the `Dockerfile` and Dependabot bumps them), and `UBUNTU_MIRROR` (default `http://archive.ubuntu.com/ubuntu/`): the Ubuntu archive chisel and the build's apt download from, e.g. `http://azure.archive.ubuntu.com/ubuntu/` (what CI uses) or a local mirror. It must be a plain `http://host[:port]/path/` URL: no `https` (the build's apt runs before CA certificates are installed; the signatures below are what protect the packages) and no credentials (build arguments are recorded in the published provenance). chisel still takes arm64 packages from `ports.ubuntu.com`, but on an arm64 build host the build's own apt for `resolute` uses the mirror, so it needs arm64 there. Packages are checked against the archive's signed `InRelease` either way: a mirror cannot alter them, but a stale one can hold back updates, security updates included. `UBUNTU_ARCHIVE_STATE` is any string that identifies the archive's state: when it changes, the package cut is redone instead of coming from the build cache. CI passes a hash of the suites' `InRelease` dates, so a build picks up Ubuntu's updates as soon as they are published and still reuses the cache while nothing changed; with a long-lived local cache, pass something like `$(date +%F)`.
 
 ## Add tools
 
@@ -66,22 +66,16 @@ It takes one job, then removes itself from the repository.
 
 ## When chisel is not enough
 
-If your jobs need `apt`, `sudo`, a C++ compiler or `-dev` packages, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
+If your jobs need `apt` packages, a C++ compiler or `-dev` libraries, use the `-full` tags: plain Ubuntu with the same runner and `ghr`, `build-essential`, `pkg-config`, `python3` and the docker CLI (the package list is `packages/full.txt`). Jobs still run as uid 1001 without `sudo`, so add packages in your own image:
 
 ```dockerfile
-FROM ubuntu:noble
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libicu74 libssl3t64 zlib1g ca-certificates git curl jq build-essential sudo \
- && rm -rf /var/lib/apt/lists/* \
- && useradd -u 1001 -m runner
-COPY --from=ghcr.io/marr-cloud/chiseled-runner:noble --chown=1001:1001 /actions-runner /actions-runner
-COPY --from=ghcr.io/marr-cloud/chiseled-runner:noble /usr/local/bin/ghr /usr/local/bin/ghr
-USER runner
-WORKDIR /actions-runner
-ENTRYPOINT ["/usr/local/bin/ghr"]
+FROM meitrix8208/chiseled-runner:noble-full
+RUN apt-get update  && apt-get install -y --no-install-recommends libpq-dev protobuf-compiler  && rm -rf /var/lib/apt/lists/*
 ```
 
-Use `libicu78` on `resolute`.
+Keep the image's entrypoint and do not set `USER`: the container starts as root so that `ghr` can keep the credentials away from jobs, and runs the runner as uid 1001 itself. If a package you add ships setuid binaries, remove the bits (`find / -xdev -perm /6000 -type f -exec chmod ug-s {} +`) unless your jobs should be able to get root.
+
+The `full` target builds like the others (`--target full`); it runs `apt-get` on the target platform, so an arm64 build on an amd64 host goes through QEMU and takes several minutes.
 
 ## Tests
 

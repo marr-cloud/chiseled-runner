@@ -2,10 +2,10 @@ name: Build
 
 on:
   pull_request:
-    paths: ['Dockerfile', 'cmd/**', 'slices/**', 'go.mod', 'compose*.yaml', '.github/workflows/build.yml']
+    paths: ['Dockerfile', 'cmd/**', 'slices/**', 'packages/**', 'go.mod', 'compose*.yaml', '.github/workflows/build.yml']
   push:
     branches: [main]
-    paths: ['Dockerfile', 'cmd/**', 'slices/**', 'go.mod', 'compose*.yaml', '.github/workflows/build.yml']
+    paths: ['Dockerfile', 'cmd/**', 'slices/**', 'packages/**', 'go.mod', 'compose*.yaml', '.github/workflows/build.yml']
   schedule:
     # Weekly: picks up new runner releases and Ubuntu security updates.
     - cron: '0 5 * * 1'
@@ -122,7 +122,7 @@ jobs:
       fail-fast: false
       matrix:
         release: [noble, resolute]
-        target: [slim, docker, build]
+        target: [slim, docker, build, full]
     # Runs job code (the e2e runner below), so it holds no publish credentials:
     # publishing is the `publish` job, on another VM.
     permissions:
@@ -191,9 +191,22 @@ jobs:
           # actions/checkout runs `git submodule foreach` on every checkout:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'cd /tmp && git init -q t && cd t && git submodule foreach true && echo "git submodule ok"'
-          # Package metadata, so scanners can see the Ubuntu packages:
-          docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
-            'test -s /var/lib/chisel/manifest.wall; n=$(ls /var/lib/dpkg/status.d | wc -l); echo "$n packages recorded"; test "$n" -ge 20; grep -q "^Source: openssl" /var/lib/dpkg/status.d/libssl3t64'
+          if [ "${{ matrix.target }}" = full ]; then
+            # A real dpkg database, Ubuntu's own apt sources (not the build's
+            # mirror) and no package lists left in the image:
+            docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
+              dpkg-query -W libssl3t64 build-essential
+              grep -Eq "^URIs: http://(archive|ports)\.ubuntu\.com/" /etc/apt/sources.list.d/ubuntu.sources
+              ! grep -q azure /etc/apt/sources.list.d/ubuntu.sources
+              test -z "$(ls /var/lib/apt/lists)"
+              echo "apt ok"'
+            # No sudo, and apt needs root: jobs cannot install packages.
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -c '! command -v sudo && ! apt-get install -y -qq hello 2>/dev/null && echo "jobs cannot install packages"'
+          else
+            # Package metadata, so scanners can see the Ubuntu packages:
+            docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
+              'test -s /var/lib/chisel/manifest.wall; n=$(ls /var/lib/dpkg/status.d | wc -l); echo "$n packages recorded"; test "$n" -ge 20; grep -q "^Source: openssl" /var/lib/dpkg/status.d/libssl3t64'
+          fi
           # Archive tools, awk (used by many `curl | sh` installers), diff/patch, less:
           docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
             cd /tmp && echo hi > f
@@ -207,7 +220,7 @@ jobs:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
             for l in libsqlite3.so.0 libffi.so.8 liblzma.so.5 libbz2.so.1.0 libzstd.so.1 libreadline.so.8 libncursesw.so.6 libpanelw.so.6 libtinfo.so.6 libgdbm.so.6 libgdbm_compat.so.4 libuuid.so.1; do
               ls /usr/lib/*-linux-gnu/$l >/dev/null || { echo "missing $l"; exit 1; }; done; echo "python libs ok"'
-          if [ "${{ matrix.target }}" = build ]; then
+          if [ "${{ matrix.target }}" = build ] || [ "${{ matrix.target }}" = full ]; then
             # A C toolchain the runner user can use: compile, archive, link, make.
             docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
               cd /tmp
@@ -227,7 +240,19 @@ jobs:
               make
               echo "toolchain ok"'
           fi
-          if [ "${{ matrix.target }}" = docker ]; then
+          if [ "${{ matrix.target }}" = full ]; then
+            # C++ and pkg-config, which the chisel slices do not have:
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              cd /tmp
+              echo "#include <string>" > a.cc
+              echo "int main() { return std::string(\"ok\").size() == 2 ? 0 : 1; }" >> a.cc
+              g++ -o a a.cc
+              ./a
+              pkg-config --version
+              python3 --version
+              echo "c++ ok"'
+          fi
+          if [ "${{ matrix.target }}" = docker ] || [ "${{ matrix.target }}" = full ]; then
             docker run --rm --entrypoint /usr/local/bin/docker "$IMG" --version
             docker run --rm --user 1001 --entrypoint /usr/local/bin/docker "$IMG" buildx version
             docker run --rm --user 1001 --entrypoint /usr/local/bin/docker "$IMG" compose version
@@ -369,7 +394,7 @@ jobs:
       fail-fast: false
       matrix:
         release: [noble, resolute]
-        target: [slim, docker, build]
+        target: [slim, docker, build, full]
     runs-on: ["ghr-e2e-${{ needs.resolve.outputs.nonce }}-${{ matrix.release }}-${{ matrix.target }}"]
     timeout-minutes: 15
     permissions:
@@ -398,11 +423,11 @@ jobs:
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master 2026-11-15
-        if: matrix.target == 'build'
+        if: matrix.target == 'build' || matrix.target == 'full'
         with:
           toolchain: stable
       - name: cargo builds and links a crate with C code (cc crate)
-        if: matrix.target == 'build'
+        if: matrix.target == 'build' || matrix.target == 'full'
         run: |
           cargo new -q /tmp/hello && cd /tmp/hello
           mkdir -p csrc
@@ -413,12 +438,12 @@ jobs:
           echo 'fn main() { println!("{}", unsafe { forty_one() } + 1); }' >> src/main.rs
           test "$(cargo run -q)" = 42 && echo "cargo + cc ok"
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        if: matrix.target == 'build'
+        if: matrix.target == 'build' || matrix.target == 'full'
         with:
           go-version-file: go.mod
           cache: false
       - name: go test -race (cgo)
-        if: matrix.target == 'build'
+        if: matrix.target == 'build' || matrix.target == 'full'
         run: go test -race -count=1 ./...
       - name: docker jobs use the host daemon
         if: matrix.target == 'docker'
@@ -461,7 +486,7 @@ jobs:
       fail-fast: false
       matrix:
         release: [noble, resolute]
-        target: [slim, docker, build]
+        target: [slim, docker, build, full]
     permissions:
       contents: read
       packages: write
