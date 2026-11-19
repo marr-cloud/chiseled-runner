@@ -20,53 +20,74 @@ var cleanRoots = []string{"/home/runner", "/tmp", "/var/tmp", "/_work", "/opt/ho
 // resetState removes what the runner user may have left:
 //   - in runnerDir, every top-level entry not owned by root (registration
 //     files, _diag, anything a job created; bin/ and externals/ are root's);
-//   - the contents of each of roots, keeping the directory itself.
+//   - in each of roots (the image's writable paths), every entry not owned by
+//     root: the runner user cannot create root-owned entries, so those are
+//     the image's (a tool or dotfile baked into a derived image) and stay.
+//     A root that is itself a mount point (a volume, -v /tmp:/tmp) is skipped:
+//     it is persistence the user chose, possibly the host's data;
+//   - everything in workdir, the runner's own work directory, mount or not.
 //
 // It never follows symlinks and never descends into another mount: a shared
-// bind mount (e.g. /tmp/runners) is left alone unless it is itself in roots.
-func resetState(runnerDir string, roots, mounts []string) error {
+// bind mount (e.g. /tmp/runners) keeps the other replicas' directories.
+func resetState(runnerDir string, roots []string, workdir string, mounts []string) error {
 	var errs []error
 	if runnerDir != "" {
-		entries, err := os.ReadDir(runnerDir)
-		if err != nil {
-			return err
+		errs = append(errs, emptyDir(runnerDir, mounts, true))
+	}
+	for _, root := range roots {
+		if isMount(root, mounts) {
+			continue
 		}
-		for _, e := range entries {
-			p := filepath.Join(runnerDir, e.Name())
-			st, err := os.Lstat(p)
+		errs = append(errs, emptyDir(root, mounts, true))
+	}
+	if workdir != "" {
+		errs = append(errs, emptyDir(workdir, mounts, false))
+	}
+	return errors.Join(errs...)
+}
+
+// emptyDir removes the entries of dir, keeping root-owned ones if keepRoot.
+// If dir is not a real directory (e.g. a symlink a job planted where its work
+// directory was), the entry itself is removed and nothing behind it.
+func emptyDir(dir string, mounts []string, keepRoot bool) error {
+	st, err := os.Lstat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !st.IsDir():
+		return os.Remove(dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if keepRoot {
+			est, err := os.Lstat(p)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
-			if st.Sys().(*syscall.Stat_t).Uid != 0 {
-				errs = append(errs, removeTree(p, mounts))
+			if est.Sys().(*syscall.Stat_t).Uid == 0 {
+				continue
 			}
 		}
-	}
-	for _, root := range roots {
-		st, err := os.Lstat(root)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			continue
-		case err != nil:
-			errs = append(errs, err)
-			continue
-		case !st.IsDir():
-			// Not a real directory (e.g. a symlink a job planted where its
-			// work directory was): remove the entry itself, nothing behind it.
-			errs = append(errs, os.Remove(root))
-			continue
-		}
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		for _, e := range entries {
-			errs = append(errs, removeTree(filepath.Join(root, e.Name()), mounts))
-		}
+		errs = append(errs, removeTree(p, mounts))
 	}
 	return errors.Join(errs...)
+}
+
+func isMount(p string, mounts []string) bool {
+	for _, m := range mounts {
+		if m == p {
+			return true
+		}
+	}
+	return false
 }
 
 // removeTree is os.RemoveAll that stops at mount points: a mount is left in

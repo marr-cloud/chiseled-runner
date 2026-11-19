@@ -58,7 +58,7 @@ func (s *Supervisor) Run(ctx context.Context, sigs <-chan os.Signal) int {
 	if s.cred != nil {
 		mounts, err := mountPoints()
 		if err == nil {
-			err = resetState(cfg.RunnerDir, append(append([]string{}, s.resetRoots...), cfg.Workdir), mounts)
+			err = resetState(cfg.RunnerDir, s.resetRoots, cfg.Workdir, mounts)
 		}
 		if err != nil {
 			s.log.Error("reset the state left by a previous run", "err", err)
@@ -135,8 +135,9 @@ func (s *Supervisor) configure(ctx context.Context, sigs <-chan os.Signal, token
 	if cfg.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
-	// As root, the runner's bin/ is root-owned: it could not update itself.
-	if cfg.DisableUpdate || s.cred != nil {
+	// The image's bin/ is root's and read-only to the runner user: a
+	// self-update could only fail (and loop). Also covers a non-root start.
+	if cfg.DisableUpdate || s.cred != nil || syscall.Access(filepath.Join(cfg.RunnerDir, "bin"), 2 /* W_OK */) != nil {
 		args = append(args, "--disableupdate")
 	}
 	if cfg.NoDefaultLabels {

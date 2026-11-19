@@ -19,6 +19,26 @@ func touch(t *testing.T, p string) {
 
 func exists(p string) bool { _, err := os.Lstat(p); return err == nil }
 
+// asRunnerUser gives what a test plants to uid 1001, as a job would have
+// created it (no-op when the test does not run as root).
+func asRunnerUser(t *testing.T, paths ...string) {
+	t.Helper()
+	if os.Getuid() != 0 {
+		return
+	}
+	for _, root := range paths {
+		err := filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			return os.Lchown(p, 1001, 1001)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestEmptyDirKeepsTheDirAndNeverFollowsSymlinks(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "home")
 	outside := t.TempDir()
@@ -31,8 +51,9 @@ func TestEmptyDirKeepsTheDirAndNeverFollowsSymlinks(t *testing.T) {
 	if err := os.Chmod(root, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	asRunnerUser(t, filepath.Join(root, ".bashrc"), filepath.Join(root, "a"), filepath.Join(root, "link"))
 
-	if err := resetState("", []string{root}, nil); err != nil {
+	if err := resetState("", []string{root}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(root)
@@ -56,9 +77,10 @@ func TestResetDoesNotCrossMounts(t *testing.T) {
 	touch(t, filepath.Join(tmp, "runners", "other-replica", "work"))
 	touch(t, filepath.Join(tmp, "runners", "me", "old"))
 	mounts := []string{filepath.Join(tmp, "runners")} // shared bind mount
+	asRunnerUser(t, filepath.Join(tmp, "stale"))
 
 	// /tmp is wiped; the runner's own work dir on the mount is wiped too.
-	if err := resetState("", []string{tmp, filepath.Join(tmp, "runners", "me")}, mounts); err != nil {
+	if err := resetState("", []string{tmp}, filepath.Join(tmp, "runners", "me"), mounts); err != nil {
 		t.Fatal(err)
 	}
 	if exists(filepath.Join(tmp, "stale")) {
@@ -79,7 +101,7 @@ func TestResetRemovesASymlinkedRootItself(t *testing.T) {
 	if err := os.Symlink(outside, work); err != nil {
 		t.Fatal(err)
 	}
-	if err := resetState("", []string{work}, nil); err != nil {
+	if err := resetState("", nil, work, nil); err != nil {
 		t.Fatal(err)
 	}
 	if exists(work) {
@@ -107,7 +129,7 @@ func TestResetRemovesRunnerUserEntriesInRunnerDir(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := resetState(dir, nil, nil); err != nil {
+	if err := resetState(dir, nil, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(filepath.Join(dir, "bin", "Runner.Listener")) {
@@ -129,5 +151,47 @@ func TestParseMountinfo(t *testing.T) {
 	got := strings.Join(parseMountinfo(in), ",")
 	if got != "/,/proc,/tmp/runners,/with space" {
 		t.Errorf("mounts = %s", got)
+	}
+}
+
+// A volume or bind mount on a cleaned path (e.g. -v /tmp:/tmp, a shared tool
+// cache) is persistence the user chose, and possibly the host's data: never
+// empty it. The runner's own work directory is emptied even on a mount.
+func TestResetSkipsRootsThatAreMounts(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "hostedtoolcache")
+	touch(t, filepath.Join(cache, "node", "20", "x"))
+	work := filepath.Join(t.TempDir(), "r-1")
+	touch(t, filepath.Join(work, "old"))
+	if err := resetState("", []string{cache}, work, []string{cache, work}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(cache, "node", "20", "x")) {
+		t.Error("emptied a mounted volume")
+	}
+	if exists(filepath.Join(work, "old")) {
+		t.Error("own work directory on a mount not emptied")
+	}
+}
+
+// Entries owned by root cannot have been created by the runner user: they are
+// the image's (e.g. a tool baked into a derived image) and are kept.
+func TestResetKeepsRootOwnedEntriesInCleanedDirs(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root")
+	}
+	home := t.TempDir()
+	touch(t, filepath.Join(home, ".gitconfig")) // root's, baked
+	touch(t, filepath.Join(home, ".bashrc"))
+	if err := os.Lchown(filepath.Join(home, ".bashrc"), 1001, 1001); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetState("", []string{home}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(home, ".gitconfig")) {
+		t.Error("removed a root-owned (baked) entry")
+	}
+	if exists(filepath.Join(home, ".bashrc")) {
+		t.Error("kept the runner user's entry")
 	}
 }

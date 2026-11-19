@@ -227,3 +227,25 @@ func TestRealMainArgs(t *testing.T) {
 		t.Errorf("unknown flag: %d, want 2", code)
 	}
 }
+
+func TestWorkdirIsValidated(t *testing.T) {
+	base := map[string]string{"REPO_URL": "https://github.com/o/r", "ACCESS_TOKEN": "x"}
+	for _, bad := range []string{"/", "relative/dir", "/actions-runner", "/actions-runner/work", "/home", "/usr", "/etc/x/.."} {
+		vars := map[string]string{"RUNNER_WORKDIR": bad}
+		for k, v := range base {
+			vars[k] = v
+		}
+		if _, err := LoadConfig(testEnv(vars), nil); err == nil {
+			t.Errorf("RUNNER_WORKDIR=%q accepted; it is emptied as root on every start", bad)
+		}
+	}
+	for _, good := range []string{"/tmp/runners/r-1", "/_work/x", "/data/work"} {
+		vars := map[string]string{"RUNNER_WORKDIR": good}
+		for k, v := range base {
+			vars[k] = v
+		}
+		if _, err := LoadConfig(testEnv(vars), nil); err != nil {
+			t.Errorf("RUNNER_WORKDIR=%q rejected: %v", good, err)
+		}
+	}
+}

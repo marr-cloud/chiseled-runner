@@ -569,6 +569,7 @@ func TestCleanStartAsRoot(t *testing.T) {
 	_ = os.Chmod(dir, 0o1777) // like the image: root-owned, sticky
 	stale := filepath.Join(t.TempDir(), "home")
 	touch(t, filepath.Join(stale, ".bashrc"))
+	_ = os.Lchown(filepath.Join(stale, ".bashrc"), 1001, 1001) // left by a job
 	touch(t, filepath.Join(dir, ".credentials"))
 	_ = os.Chown(filepath.Join(dir, ".credentials"), 1001, 1001)
 
@@ -592,6 +593,29 @@ func TestCleanStartAsRoot(t *testing.T) {
 	}
 	lines := callLines(t, logDir)
 	if len(lines) == 0 || !strings.Contains(lines[0], "--disableupdate") {
+		t.Errorf("configure without --disableupdate: %q", lines)
+	}
+}
+
+// With a non-root start the runner's bin/ (root's in the image) is not
+// writable, so a self-update could only fail and loop: pass --disableupdate.
+func TestDisableUpdateWhenBinIsNotWritable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores permissions")
+	}
+	logDir := t.TempDir()
+	dir := fakeRunner(t, "exit 0")
+	if err := os.Chmod(filepath.Join(dir, "bin"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "bin"), 0o755) })
+	srv := apiServer(t)
+	defer srv.Close()
+	s := newSupervisor(t, dir, baseCfg(), srv, logDir)
+	if code := s.Run(context.Background(), make(chan os.Signal)); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if lines := callLines(t, logDir); len(lines) == 0 || !strings.Contains(lines[0], "--disableupdate") {
 		t.Errorf("configure without --disableupdate: %q", lines)
 	}
 }
