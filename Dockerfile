@@ -130,6 +130,11 @@ FROM ubuntu-${UBUNTU_RELEASE} AS rootfs
 ARG UBUNTU_RELEASE
 ARG TARGETARCH
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
+# Anything that identifies the archive's current state (CI: a hash of the
+# suites' InRelease dates). Nothing reads it, but every RUN below depends on
+# it: when Ubuntu publishes updates the build cache stops reusing an old cut
+# and apt index, and while the archive is unchanged it still does.
+ARG UBUNTU_ARCHIVE_STATE=
 # The Ubuntu archive occasionally times out from CI; retry rather than fail
 # a weekly build. apt uses the same mirror as chisel; security.ubuntu.com
 # and ports.ubuntu.com (noble on an arm64 build host) stay as they are.
