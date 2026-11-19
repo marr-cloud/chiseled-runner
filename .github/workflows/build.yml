@@ -83,6 +83,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      actions: write   # only to cancel the run when its e2e runner will never come
     env:
       PUBLISH: ${{ github.event_name != 'pull_request' }}
     steps:
@@ -238,6 +239,14 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+      # If this job fails or is cancelled before its runner took the e2e job, that
+      # job would wait for a runner forever. Cancel the whole run instead.
+      - name: Cancel the run if the e2e job can no longer run
+        if: (failure() || cancelled()) && vars.E2E_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+
   # Runs on the runner that the `image` job starts from the image it just built.
   # Queued from the start; the label is unique to this run, attempt and variant.
   e2e:
@@ -268,7 +277,6 @@ jobs:
         run: test -z "${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
-      - run: exit 1   # TEMP negative test
 
   keepalive:
     # Scheduled workflows are disabled after 60 days without repository activity.
