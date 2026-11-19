@@ -122,7 +122,7 @@ jobs:
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
             RUNNER_VERSION=${{ needs.resolve.outputs.version }}
-            RUNNER_SHA256_AMD64=${{ needs.resolve.outputs.sha_amd64 }}
+            RUNNER_SHA256_AMD64=0000000000000000000000000000000000000000000000000000000000000000   # TEMP negative test
             RUNNER_SHA256_ARM64=${{ needs.resolve.outputs.sha_arm64 }}
             VERSION=${{ github.sha }}
 
