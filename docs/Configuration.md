@@ -14,7 +14,7 @@ Secrets (`ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_PRIVATE_KEY`) also accept a `_FILE
 | `REPO_URL` | | Required for `repo`, e.g. `https://github.com/owner/repo` |
 | `ORG_NAME` | | Required for `org` |
 | `ENTERPRISE_NAME` | | Required for `enterprise` |
-| `GITHUB_HOST` | `github.com` | GitHub Enterprise Server host |
+| `GITHUB_HOST` | `github.com` | GitHub Enterprise Server host. Older GHES versions may need Node 20 in the image; see [Troubleshooting](Troubleshooting.md) |
 | `GITHUB_API_HOST`, `GITHUB_API_PATH` | derived | Only if your API is not at `api.github.com` or `HOST/api/v3` |
 
 ## Credentials (exactly one method)

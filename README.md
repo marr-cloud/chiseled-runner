@@ -8,7 +8,7 @@ docker compose up -d --scale runner=3
 ```
 
 - **No shell scripts.** `ghr` (`cmd/ghr`, about 900 lines, standard library only) registers the runner, forwards signals, restarts it like the runner's own wrapper would, and deregisters on exit.
-- **Small.** `FROM scratch` plus a [chisel](https://github.com/canonical/chisel)-cut rootfs (~90 MB) and a pruned runner with Node 24 only (the upstream tarball ships 683 MB; the image keeps about 210 MB): about 310 MB uncompressed in total for `noble`.
+- **Small.** `FROM scratch` plus a [chisel](https://github.com/canonical/chisel)-cut rootfs (~90 MB) and a pruned runner with Node 24 only (the upstream tarball ships 683 MB; the image keeps about 210 MB): about 300 MB uncompressed in total for `noble` (`du -sxm /`).
 - **Scannable.** Unlike a plain chiselled image, trivy/grype/syft see every Ubuntu package, so CVE reports and SBOMs are real.
 - **Scales natively.** Runner names come from the container hostname, so replicas never collide and need no volume or wrapper.
 - **Safer defaults.** Non-root, credentials scrubbed from job environments, checksum-verified runner, SBOM and provenance on release builds.

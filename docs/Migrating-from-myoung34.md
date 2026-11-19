@@ -16,6 +16,6 @@ Most variables carry over. These differences matter:
 | `APP_LOGIN` | Not needed; the installation is found from the repository or organisation |
 | The wrapper script and `runner_id.txt` volume for `--scale` | Not needed |
 | `apt`, `sudo`, many preinstalled tools | Not in the image; see [Building and extending](Building-and-extending.md) |
-| Node 20 and Node 24 bundled | Node 24 only. Actions that declare `node20` run on Node 24 (GitHub's default since 2026-06-16). `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true` needs an image built with `NODE_VERSIONS="20 24"` |
+| Node 20 and Node 24 bundled | Node 24 only. On github.com actions that declare `node20` run on Node 24 (default since 2026-06-16, required since 2026-09-23: `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` no longer has any effect). On GitHub Enterprise Server versions that still run them on Node 20, build with `NODE_VERSIONS="20 24"` |
 
 Also changed: deregistration uses GitHub's `remove-token` endpoint, and GitHub App installations are looked up directly instead of paging through `/app/installations`.
