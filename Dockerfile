@@ -132,7 +132,15 @@ ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
 # The Ubuntu archive occasionally times out from CI; retry rather than fail
 # a weekly build. apt uses the same mirror as chisel; security.ubuntu.com
 # and ports.ubuntu.com (noble on an arm64 build host) stay as they are.
-RUN sed -i "s|http://archive.ubuntu.com/ubuntu/\?|${UBUNTU_MIRROR}|" /etc/apt/sources.list.d/ubuntu.sources \
+# If the sources name archive.ubuntu.com at all, the rewrite must take: a base
+# image that changes their format fails here instead of silently going back
+# to archive.ubuntu.com.
+RUN src=/etc/apt/sources.list.d/ubuntu.sources \
+ && if grep -q 'archive\.ubuntu\.com' "$src"; then \
+      sed -i "s|http://archive.ubuntu.com/ubuntu/\?|${UBUNTU_MIRROR}|" "$src" \
+      && grep -qF "URIs: ${UBUNTU_MIRROR}" "$src" \
+      || { echo "could not point $src at ${UBUNTU_MIRROR}; update the rewrite" >&2; exit 1; }; \
+    fi \
  && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries \
  && apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ca-certificates jq zstd >/dev/null

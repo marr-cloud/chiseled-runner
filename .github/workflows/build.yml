@@ -206,7 +206,9 @@ jobs:
         if: needs.resolve.outputs.e2e == 'true'
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
-          app-id: ${{ secrets.E2E_APP_ID }}
+          # client-id (a repository variable, not secret) replaces the deprecated app-id.
+          client-id: ${{ vars.E2E_APP_CLIENT_ID }}
+          app-id: ${{ vars.E2E_APP_CLIENT_ID == '' && secrets.E2E_APP_ID || '' }}
           private-key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
           permission-administration: write
           skip-token-revoke: true   # the next step revokes it
@@ -271,7 +273,9 @@ jobs:
         if: always() && needs.resolve.outputs.e2e == 'true' && steps.app.outcome == 'success'
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
-          app-id: ${{ secrets.E2E_APP_ID }}
+          # client-id (a repository variable, not secret) replaces the deprecated app-id.
+          client-id: ${{ vars.E2E_APP_CLIENT_ID }}
+          app-id: ${{ vars.E2E_APP_CLIENT_ID == '' && secrets.E2E_APP_ID || '' }}
           private-key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
           permission-administration: write
       - name: Remove the e2e runner
@@ -364,7 +368,7 @@ jobs:
             --jq '.jobs[] | select((.name | startswith("e2e (")) and (.status | test("^(queued|waiting|pending|requested)$"))) | .name')
           if [ -n "$waiting" ]; then
             echo "::error::no runner will come for: $(echo "$waiting" | paste -sd, -); cancelling the run (the cause is in the failed image job)"
-            gh api -X POST "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel" >/dev/null
+            gh api -X POST "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel" >/dev/null || true   # already cancelling (e.g. cancelled by hand)
           fi
 
   publish:

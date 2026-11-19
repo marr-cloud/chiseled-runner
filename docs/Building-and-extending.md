@@ -42,14 +42,14 @@ How the credentials are kept apart:
 ### Setting it up in a fork or copy
 
 1. Create a GitHub App (no webhook) with the repository permission **Administration: read and write**, and install it only on the repository.
-2. Add the secrets `E2E_APP_ID` and `E2E_APP_PRIVATE_KEY` (the `.pem`), and the variable `E2E_ENABLED=true`.
+2. Add the secret `E2E_APP_PRIVATE_KEY` (the `.pem`), and the variables `E2E_APP_CLIENT_ID` (the App's Client ID, on its settings page) and `E2E_ENABLED=true`. The older secret `E2E_APP_ID` still works in place of `E2E_APP_CLIENT_ID`.
 
 Without `E2E_ENABLED=true` the e2e parts are skipped and the build behaves as before. They are always skipped for pull requests from forks and from Dependabot, which get no secrets.
 
 ### When it fails
 
 - **The run ends cancelled, with "no runner will come for: `e2e (...)`".** An image job failed before its runner could take its job (a build or smoke-test failure, or the runner never got online), so the `cancel-orphans` job cancelled the run instead of leaving that job queued. The real error is in the failed `image` job.
-- **Re-running.** Use *Re-run all jobs*: it also draws a new label. *Re-run failed jobs* re-runs `image` without its `e2e` job, so the new runner waits for nothing and fails after 15 minutes.
+- **Re-running.** *Re-run all jobs* always works and draws a new label. *Re-run failed jobs* also works when both an `image` job and its `e2e` job failed or were cancelled (the usual case): both re-run, with the same label. It does not when `image` failed after its `e2e` job had passed (for example in the cleanup step): the new runner waits for a job that is not re-run and fails after 15 minutes.
 
 ### By hand
 
