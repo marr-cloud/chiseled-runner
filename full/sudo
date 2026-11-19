@@ -1,0 +1,72 @@
+#!/bin/sh
+# sudo for the -full images. Not a real sudo: it never raises privileges.
+#
+# Workflows written for myoung34 or ubuntu-latest run `sudo apt-get install`.
+# - As root (RUN_AS_ROOT=true), this runs the command, as sudo would.
+# - As the runner user, it lets `apt-get update` and installing packages the
+#   image already has pass (so the same workflow runs unchanged on an image
+#   built FROM -full with them), and refuses everything else.
+set -eu
+
+refuse() {
+  echo "sudo: $*" >&2
+  exit 1
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -E | -H | -n | -k | -S | --preserve-env | --preserve-env=*) shift ;;
+    -u)
+      [ $# -ge 2 ] || refuse "-u needs a user"
+      case "$2" in root | 0) shift 2 ;; *) refuse "only -u root is supported (got '$2')" ;; esac
+      ;;
+    --) shift; break ;;
+    -*) refuse "option '$1' is not supported by this image's sudo" ;;
+    *) break ;;
+  esac
+done
+[ $# -gt 0 ] || refuse "usage: sudo [-E] [-H] [-n] [-u root] [--] COMMAND [ARGS...]"
+
+if [ "$(id -u)" = 0 ]; then
+  exec "$@"
+fi
+
+case "$1" in
+  apt-get | apt)
+    case "${2:-}" in
+      update)
+        echo "sudo: jobs run as uid $(id -u), not root: skipping '$1 update'" >&2
+        exit 0
+        ;;
+      install)
+        shift 2
+        missing="" have=""
+        for arg in "$@"; do
+          case "$arg" in -*) continue ;; esac
+          pkg=${arg%%=*}
+          if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" = "install ok installed" ]; then
+            have="$have $pkg"
+          else
+            missing="$missing $pkg"
+          fi
+        done
+        if [ -z "$missing" ]; then
+          echo "sudo: already installed:${have}" >&2
+          exit 0
+        fi
+        ;;
+    esac
+    ;;
+esac
+
+cat >&2 <<EOF
+sudo: jobs on this runner run as uid $(id -u), not root, and this image's sudo
+cannot raise privileges${missing:+ (missing:${missing})}. Either:
+  - start the runner with RUN_AS_ROOT=true (jobs run as root, as on
+    myoung34; they can then read the runner's credentials), or
+  - build an image FROM this one with the packages installed:
+      FROM meitrix8208/chiseled-runner:<release>-full
+      RUN apt-get update && apt-get install -y --no-install-recommends <packages>
+See https://github.com/marr-cloud/chiseled-runner/blob/main/docs/Building-and-extending.md#when-chisel-is-not-enough
+EOF
+exit 1

@@ -200,8 +200,33 @@ jobs:
               ! grep -q azure /etc/apt/sources.list.d/ubuntu.sources
               test -z "$(ls /var/lib/apt/lists)"
               echo "apt ok"'
-            # No sudo, and apt needs root: jobs cannot install packages.
-            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -c '! command -v sudo && ! apt-get install -y -qq hello 2>/dev/null && echo "jobs cannot install packages"'
+            # sudo is a shim that never raises privileges. As root
+            # (RUN_AS_ROOT=true) it runs the command, like myoung34's sudo:
+            docker run --rm --user 0 --entrypoint /usr/bin/bash "$IMG" -ec '
+              sudo apt-get update -qq
+              sudo -E -H apt-get install -y -qq hello >/dev/null
+              test "$(hello)" = "Hello, world!"
+              test "$(sudo -- id -u)" = 0
+              test "$(sudo -u root bash -c "echo ok")" = ok
+              echo "sudo as root ok"'
+            # As the runner user it cannot install anything...
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              cd /tmp
+              ! sudo apt-get install -y hello 2> err
+              grep -q RUN_AS_ROOT=true err
+              grep -q FROM err
+              ! sudo id 2>/dev/null
+              ! sudo -u nobody id 2>/dev/null
+              ! sudo -i 2>/dev/null
+              ! apt-get install -y -qq hello 2>/dev/null
+              echo "sudo as 1001 refuses"'
+            # ...but an update, or packages the image already has, pass, so
+            # the same workflow runs unchanged on an image built FROM -full:
+            docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+              sudo apt-get update
+              sudo apt-get install -y -q --no-install-recommends curl git:amd64 2>&1 | grep -q "already installed"
+              sudo apt install -y git=$(dpkg-query -W -f="\${Version}" git)
+              echo "sudo as 1001 passes for installed packages"'
           else
             # Package metadata, so scanners can see the Ubuntu packages:
             docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \

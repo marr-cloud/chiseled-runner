@@ -436,6 +436,9 @@ chmod 1777 /actions-runner
 # get root back. Packages installed later in a derived image may add some.
 find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 EOF
+# A sudo that never raises privileges (full/sudo): `sudo apt-get install`
+# in workflows works with RUN_AS_ROOT=true, and explains itself otherwise.
+COPY --chmod=755 full/sudo /usr/local/bin/sudo
 COPY --from=ghr    /out/ghr /usr/local/bin/ghr
 COPY --from=runner /actions-runner /actions-runner
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
