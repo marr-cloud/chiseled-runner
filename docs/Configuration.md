@@ -21,7 +21,7 @@ Secrets (`ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_PRIVATE_KEY`) also accept a `_FILE
 
 | Variable | Notes |
 |---|---|
-| `ACCESS_TOKEN` | A personal access token. See [Authentication](Authentication) |
+| `ACCESS_TOKEN` | A personal access token. See [Authentication](Authentication.md) |
 | `APP_ID` + `APP_PRIVATE_KEY` | A GitHub App. The key may be one line with literal `\n` |
 | `RUNNER_TOKEN` | A one-hour registration token. Works, but the runner cannot be deregistered on exit |
 
@@ -41,7 +41,7 @@ Secrets (`ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_PRIVATE_KEY`) also accept a `_FILE
 | Variable | Default | Notes |
 |---|---|---|
 | `EPHEMERAL` | `false` (`true` in `compose.yaml`) | Take one job, then exit. Compose restarts the container with a fresh runner. Recommended |
-| `DISABLE_AUTO_UPDATE` | `false` | Pass `--disableupdate`. See [Architecture](Architecture#self-update) |
+| `DISABLE_AUTO_UPDATE` | `false` | Pass `--disableupdate`. See [Architecture](Architecture.md#self-update) |
 | `NO_DEFAULT_LABELS` | `false` | Do not add `self-hosted`, OS and architecture labels |
 | `DISABLE_AUTOMATIC_DEREGISTRATION` | `false` | Leave the runner registered when the container stops |
 | `GHR_DRY_RUN` | `false` | Print the resolved config and exit |

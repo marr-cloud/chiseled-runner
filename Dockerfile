@@ -80,7 +80,10 @@ EOF
 FROM --platform=$BUILDPLATFORM ubuntu:${UBUNTU_RELEASE} AS rootfs
 ARG UBUNTU_RELEASE
 ARG TARGETARCH
-RUN apt-get update -qq \
+# The Ubuntu archive occasionally times out from CI; retry rather than fail
+# a weekly build.
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries \
+ && apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ca-certificates jq zstd >/dev/null
 COPY --from=chisel /out/chisel /usr/local/bin/chisel
 COPY slices/${UBUNTU_RELEASE}.txt /slices.txt
@@ -91,9 +94,15 @@ case "${UBUNTU_RELEASE}" in
   resolute) release=ubuntu-26.04 ;;
   *) echo "UBUNTU_RELEASE must be noble or resolute" >&2; exit 1 ;;
 esac
-mkdir /rootfs
-chisel cut --release "${release}" --arch "${TARGETARCH}" --root /rootfs \
-  $(grep -v '^[[:space:]]*#' /slices.txt | grep -v '^[[:space:]]*$')
+slices=$(grep -v '^[[:space:]]*#' /slices.txt | grep -v '^[[:space:]]*$')
+for attempt in 1 2 3 4; do
+  rm -rf /rootfs && mkdir /rootfs
+  # shellcheck disable=SC2086 # one argument per slice
+  chisel cut --release "${release}" --arch "${TARGETARCH}" --root /rootfs ${slices} && break
+  [ "${attempt}" -lt 4 ] || exit 1
+  echo "chisel cut failed (attempt ${attempt}); retrying in $((attempt * 15))s" >&2
+  sleep $((attempt * 15))
+done
 
 # `git submodule` is a shell script that no chisel slice ships, and
 # actions/checkout runs it on every checkout. Take it and the two shell
