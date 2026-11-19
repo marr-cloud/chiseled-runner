@@ -12,8 +12,18 @@
 # (https://github.com/canonical/chisel): no apt, no dpkg, no package manager.
 
 ARG UBUNTU_RELEASE=noble
-ARG GO_IMAGE=golang:1.25-bookworm
-ARG DOCKER_CLI_IMAGE=docker:29-cli
+# GO_IMAGE and DOCKER_CLI_IMAGE take any image reference; by default they name
+# the pinned stages below.
+ARG GO_IMAGE=go-base
+ARG DOCKER_CLI_IMAGE=docker-cli-base
+
+# ------------------------------------------------------- base images ------
+# Pinned by digest, so the publish job rebuilds from exactly the bases the
+# tested build used. Dependabot (docker ecosystem) bumps tag and digest.
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS go-base
+FROM --platform=$BUILDPLATFORM ubuntu:noble@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8 AS ubuntu-noble
+FROM --platform=$BUILDPLATFORM ubuntu:resolute@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db AS ubuntu-resolute
+FROM docker:29-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli-base
 
 # ---------------------------------------------------------------- ghr ------
 # The entrypoint. Pure standard library, static, reproducible (-trimpath).
@@ -115,7 +125,7 @@ EOF
 # Cut the Ubuntu packages we need into /rootfs, add the runner user, and
 # record what was installed so image scanners can see it. Runs on the build
 # platform: chisel fetches packages for TARGETARCH without emulation.
-FROM --platform=$BUILDPLATFORM ubuntu:${UBUNTU_RELEASE} AS rootfs
+FROM ubuntu-${UBUNTU_RELEASE} AS rootfs
 ARG UBUNTU_RELEASE
 ARG TARGETARCH
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
