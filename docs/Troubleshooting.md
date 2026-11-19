@@ -2,7 +2,7 @@
 
 **`invalid configuration` at start.** `ghr` validates before doing anything; the message names the variable. Try `--dry-run`.
 
-**`HTTP 401/403/404` getting the registration token.** The credential lacks the permission for that scope, or the org/repo name is wrong. See [Authentication](Authentication). A 404 on a repo usually means the token cannot see it.
+**`HTTP 401/403/404` getting the registration token.** The credential lacks the permission for that scope, or the org/repo name is wrong. See [Authentication](Authentication.md). A 404 on a repo usually means the token cannot see it.
 
 **Runners show up Offline after `docker compose down`.** The container was killed before it could deregister. Keep `stop_grace_period: 2m`. Stale entries can be deleted in GitHub; `--replace` handles re-registration under the same name.
 
@@ -14,11 +14,11 @@
 
 **`create workdir ... permission denied`, container restarting.** The work directory's parent is not writable by uid 1001, usually a bind mount Docker created as root. The log's `hint` gives the exact `install -d` command to run on the host.
 
-**`bind source path does not exist: /tmp/runners`.** Create it first; see [Docker jobs](Docker-jobs).
+**`bind source path does not exist: /tmp/runners`.** Create it first; see [Docker jobs](Docker-jobs.md).
 
-**Container actions fail to mount the workspace.** The work directory must exist at the same path on the host and in the container; see [Docker jobs](Docker-jobs).
+**Container actions fail to mount the workspace.** The work directory must exist at the same path on the host and in the container; see [Docker jobs](Docker-jobs.md).
 
-**A job needs a tool that is not installed.** Add its slice or use a different base; see [Building and extending](Building-and-extending).
+**A job needs a tool that is not installed.** Add its slice or use a different base; see [Building and extending](Building-and-extending.md).
 
 **Zombie processes accumulate.** Run with `init: true` (set in `compose.yaml`) or `docker run --init`.
 

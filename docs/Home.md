@@ -20,7 +20,7 @@ docker compose up -d --scale runner=3
 
 Three runners appear in your organisation, named `gh-runner-<container id>`. Scale up or down at any time with another `--scale`; stopping a container deregisters its runner.
 
-Next: [Configuration](Configuration) · [Authentication](Authentication) · [Scaling](Scaling) · [Docker jobs](Docker-jobs) · [Security](Security)
+Next: [Configuration](Configuration.md) · [Authentication](Authentication.md) · [Scaling](Scaling.md) · [Docker jobs](Docker-jobs.md) · [Security](Security.md)
 
 ## Images
 
@@ -35,4 +35,4 @@ Published to `docker.io/meitrix8208/chiseled-runner` and `ghcr.io/marr-cloud/chi
 
 ## What is *not* in the image
 
-There is no `apt`, `sudo`, compiler, Python or Node on `PATH` (Node for JavaScript actions is bundled inside the runner). That is the point of the image. If your workflows need more, see [Building and extending](Building-and-extending).
+There is no `apt`, `sudo`, compiler, Python or Node on `PATH` (Node for JavaScript actions is bundled inside the runner). That is the point of the image. If your workflows need more, see [Building and extending](Building-and-extending.md).

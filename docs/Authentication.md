@@ -31,4 +31,4 @@ APP_PRIVATE_KEY_FILE=/run/secrets/app_key   # or APP_PRIVATE_KEY with literal \n
 
 `ghr` removes `ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_ID`, `APP_LOGIN` and `APP_PRIVATE_KEY` (and their `_FILE` forms) from the environment of the runner process. Workflow steps inherit that environment, so without this a job could simply print the token. (The upstream image keeps them unless you opt in to `UNSET_CONFIG_VARS`.)
 
-Files mounted for `*_FILE` secrets are still readable by the `runner` user inside the container; see [Security](Security).
+Files mounted for `*_FILE` secrets are still readable by the `runner` user inside the container; see [Security](Security.md).
