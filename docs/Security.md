@@ -2,8 +2,8 @@
 
 ## Runtime
 
-- Runs as uid 1001 (`runner`), not root. No `sudo`, no setuid binaries, no package manager.
-- The `ghr` binary strips credentials from the environment before starting the runner (see [Authentication](Authentication.md#keeping-secrets-away-from-workflows)).
+- The runner and every job run as uid 1001 (`runner`), not root. No `sudo`, no setuid binaries, no package manager.
+- The container itself starts as root only so that `ghr` and `docker-init` can hold the credentials where uid 1001 cannot read them: `ghr` strips them from the runner's environment and runs the runner as 1001 (see [Authentication](Authentication.md#keeping-secrets-away-from-workflows)). Do not override `user:`.
 - `EPHEMERAL=true` gives every job a fresh container.
 - Self-hosted runners should not serve public repositories with untrusted pull requests. Anyone who can open a PR can run code on your runner.
 

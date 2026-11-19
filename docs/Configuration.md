@@ -45,6 +45,7 @@ Secrets (`ACCESS_TOKEN`, `RUNNER_TOKEN`, `APP_PRIVATE_KEY`) also accept a `_FILE
 | `NO_DEFAULT_LABELS` | `false` | Do not add `self-hosted`, OS and architecture labels |
 | `DISABLE_AUTOMATIC_DEREGISTRATION` | `false` | Leave the runner registered when the container stops |
 | `GHR_DRY_RUN` | `false` | Print the resolved config and exit |
+| `RUN_AS_ROOT` | `false` | Run the runner and jobs as root instead of uid 1001. Jobs can then read the runner's credentials |
 | `GHR_RUNNER_DIR` | `/actions-runner` | Where the runner lives |
 
 ## Command line

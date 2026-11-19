@@ -12,9 +12,9 @@
 
 **`docker: permission denied` in a job.** `DOCKER_GID` does not match the socket's group. Check `stat -c %g /var/run/docker.sock`.
 
-**`create workdir ... permission denied`, container restarting.** The work directory's parent is not writable by uid 1001, usually a bind mount Docker created as root. The log's `hint` gives the exact `install -d` command to run on the host.
+**`jobs ... can read the runner's credentials` warning.** The container was started as a non-root `user:` or with `RUN_AS_ROOT=true`. See [Authentication](Authentication.md#keeping-secrets-away-from-workflows).
 
-**`bind source path does not exist: /tmp/runners`.** Create it first; see [Docker jobs](Docker-jobs.md).
+**`create workdir ... permission denied`, container restarting.** Only when the container does not start as root (a `user:` override): the work directory's parent is not writable by that user, usually a bind mount Docker created as root. Remove the override, or run the `install -d` command the log's `hint` gives on the host.
 
 **Container actions fail to mount the workspace.** The work directory must exist at the same path on the host and in the container; see [Docker jobs](Docker-jobs.md).
 
