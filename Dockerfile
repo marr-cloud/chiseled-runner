@@ -170,7 +170,9 @@ ENV PATH=/usr/local/bin:/usr/bin:/bin \
     AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache \
     RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 
-USER 1001:1001
+# No USER: the container starts as root so that ghr (and docker-init) keep the
+# credentials in root's processes, and ghr runs the runner and every job as
+# uid 1001, which cannot read root's /proc/<pid>/environ.
 WORKDIR /actions-runner
 ENTRYPOINT ["/usr/local/bin/ghr"]
 

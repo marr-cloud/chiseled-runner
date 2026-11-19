@@ -135,7 +135,10 @@ jobs:
           set -euxo pipefail
           docker run --rm "$IMG" --version
           # Config resolution, with no network or GitHub involved:
-          docker run --rm -e REPO_URL=https://github.com/o/r -e ACCESS_TOKEN=x "$IMG" --dry-run
+          docker run --rm -e REPO_URL=https://github.com/o/r -e ACCESS_TOKEN=x "$IMG" --dry-run | tee dry-run.txt
+          # Starts as root and runs the runner (and jobs) as 1001, so jobs cannot
+          # read the credentials in /proc/<pid>/environ of root's processes:
+          grep -q 'runner_user=1001 ' dry-run.txt
           # The .NET runtime, ICU and OpenSSL all load from the chiselled rootfs:
           docker run --rm --entrypoint /actions-runner/bin/Runner.Listener "$IMG" --version
           # Bundled Node for JavaScript actions:
