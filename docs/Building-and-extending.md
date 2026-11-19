@@ -27,9 +27,10 @@ Tools come from `slices/<release>.txt`, one chisel slice per line. Find slice na
 Before publishing, CI starts every freshly built amd64 image as an ephemeral runner of this repository and runs a real job on it (the `e2e` job in `build.yml`):
 
 - a JavaScript action that declares `node20`, which must run on Node 24;
-- `hashFiles()`, `actions/setup-node` writing to the tool cache, and `git submodule`;
+- `hashFiles()`, `actions/setup-node` and `actions/setup-python` writing to the tool cache (and Python's `sqlite3`, `ctypes`, `lzma`... importing), and `git submodule`;
 - no runner credentials visible to job steps;
-- on `-docker` images: `docker run hello-world` and a bind mount of `$GITHUB_WORKSPACE`.
+- on `-docker` images: `docker run hello-world` and a bind mount of `$GITHUB_WORKSPACE`;
+- on `-build` images: a Rust crate with C code (the `cc` crate) built with `cargo`, and this repository's Go tests with `-race`.
 
 The runner's only label is `ghr-e2e-<random>-<release>-<variant>`, and the image job passes only if the runner's log shows it ran *that* variant's `e2e` job and the job succeeded. The step summary reports seconds from container start to "Listening for Jobs" and to the job being picked up.
 

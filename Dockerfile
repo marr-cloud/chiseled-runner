@@ -144,8 +144,44 @@ RUN src=/etc/apt/sources.list.d/ubuntu.sources \
     fi \
  && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries \
  && apt-get update -qq \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ca-certificates git jq zstd >/dev/null
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ca-certificates jq zstd >/dev/null
 COPY --from=chisel /out/chisel /usr/local/bin/chisel
+# Building for another architecture (arm64 on an amd64 host): give apt that
+# architecture's package lists too, so pkgdb looks packages up as
+# name:arch=version. Without them, an arch-specific name (the arm64 build's
+# gcc-13-aarch64-linux-gnu) matches the host's cross-compiler package of the
+# same name, and scanners get the wrong Source.
+RUN <<'EOF'
+set -eu
+native=$(dpkg --print-architecture)
+[ "${TARGETARCH}" != "${native}" ] || exit 0
+. /etc/os-release
+src=/etc/apt/sources.list.d/ubuntu.sources
+sed -i "/^Types:/a Architectures: ${native}" "${src}"
+case "${TARGETARCH}" in
+  arm64) uris=http://ports.ubuntu.com/ubuntu-ports/ security=${uris} ;;
+  amd64) uris=${UBUNTU_MIRROR} security=http://security.ubuntu.com/ubuntu/ ;;
+  *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;;
+esac
+cat >> "${src}" <<SRC
+
+Types: deb
+Architectures: ${TARGETARCH}
+URIs: ${uris}
+Suites: ${VERSION_CODENAME} ${VERSION_CODENAME}-updates
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+Architectures: ${TARGETARCH}
+URIs: ${security}
+Suites: ${VERSION_CODENAME}-security
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+SRC
+dpkg --add-architecture "${TARGETARCH}"
+apt-get update -qq
+EOF
 
 # cut ROOT RELEASE SLICE_FILE...: chisel cut the slices listed in the files
 # (one per line, # comments) into a fresh ROOT, retrying on archive timeouts.
@@ -177,8 +213,15 @@ mkdir -p "${root}/var/lib/dpkg/status.d"
 zstd -dc "${root}/var/lib/chisel/manifest.wall" \
   | jq -r 'select(.kind == "package") | "\(.name) \(.version) \(.arch)"' \
   | while read -r name version arch; do
-      src=$(apt-cache show "${name}=${version}" 2>/dev/null | sed -n 's/^Source: //p' | head -1)
-      [ -n "${src}" ] || src=$(apt-cache show "${name}" 2>/dev/null | sed -n 's/^Source: //p' | head -1)
+      # name:arch=version first (see the foreign-architecture setup above);
+      # the unversioned fallback (the archive moved on since the cut) only
+      # for the build host's own architecture or arch-independent packages.
+      show() { apt-cache show "$1" 2>/dev/null | sed -n 's/^Source: //p' | head -1; }
+      src=$(show "${name}:${arch}=${version}")
+      if [ -z "${src}" ] && { [ "${arch}" = all ] || [ "${arch}" = "$(dpkg --print-architecture)" ]; }; then
+        src=$(show "${name}=${version}")
+        [ -n "${src}" ] || src=$(show "${name}")
+      fi
       {
         echo "Package: ${name}"
         echo "Status: install ok installed"
@@ -241,6 +284,7 @@ COPY slices/${UBUNTU_RELEASE}-build.txt /slices-build.txt
 RUN <<'EOF'
 set -eu
 release=$(ubuntu-release)
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git >/dev/null
 git clone -q --depth 1 -b "${release}" https://github.com/canonical/chisel-releases /release
 if [ ! -e /release/slices/make.yaml ]; then
   cat > /release/slices/make.yaml <<'YAML'
@@ -264,7 +308,9 @@ fi
 # gcc's slices ship its LTO plugin but not lto-wrapper, so gcc passes the
 # linker an empty -plugin-opt=; ld.bfd ignores it, rust-lld (Rust's default
 # linker) fails. Ship lto-wrapper next to the plugin, for the same arch.
+# Skipped where the slice already lists it (fixed upstream).
 for f in /release/slices/gcc-*-x86-64-linux-gnu.yaml /release/slices/gcc-*-aarch64-linux-gnu.yaml; do
+  grep -q 'lto-wrapper:' "$f" && continue
   awk '
     /^      \/usr\/libexec\/gcc\/[^\/]+\/[0-9]+\/liblto_plugin\.so:$/ {
       w = $0; sub(/liblto_plugin\.so:$/, "lto-wrapper:", w)
@@ -276,8 +322,10 @@ cut /toolchain /release /slices-build.txt
 ls /toolchain/usr/libexec/gcc/*/*/lto-wrapper >/dev/null || {
   echo "lto-wrapper missing: update the gcc slice patch" >&2; exit 1; }
 pkgdb /toolchain
-# Only what lives under /usr, plus the package records: the slim image's
-# manifest, /tmp, /etc and the rest stay as they are.
+# Keep /usr and /var (the package records in var/lib/dpkg/status.d, and the
+# same empty /var dirs the slim image has): the slim image's /etc, /tmp,
+# /lib symlinks and chisel manifest stay as they are. That manifest
+# describes the slim cut only; status.d describes both.
 find /toolchain -mindepth 1 -maxdepth 1 ! -name usr ! -name var -exec rm -rf {} +
 rm -rf /toolchain/var/lib/chisel
 find /toolchain -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +

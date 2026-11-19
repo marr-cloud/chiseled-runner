@@ -1,4 +1,5 @@
-# Extra slices for the `build` target (cut on top of the release's list):
+# Extra slices for the `build` target, cut separately and copied over the
+# release's slim image:
 # a C toolchain, so jobs can link Rust crates, build cgo and run `go test -race`.
 # No C++ (Ubuntu has no g++ slices yet) and no pkg-config.
 
