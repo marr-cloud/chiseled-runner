@@ -60,9 +60,22 @@ parse:
 		log.Error("invalid configuration", "err", err)
 		return 2
 	}
+	groups, _ := os.Getgroups()
+	cred := runnerCredential(os.Getuid(), groups, cfg.RunAsRoot)
+	runnerUser := "1001"
+	switch {
+	case cred == nil && os.Getuid() == 0:
+		runnerUser = "root"
+	case cred == nil:
+		runnerUser = fmt.Sprintf("%d (no drop)", os.Getuid())
+	}
 	if dryRun {
-		fmt.Println(cfg.describe())
+		fmt.Println(cfg.describe(runnerUser))
 		return 0
+	}
+	if cred == nil {
+		log.Warn("jobs run as the same user as ghr and can read the runner's credentials from /proc; start the container as root (the image default) unless you set RUN_AS_ROOT on purpose",
+			"runner_user", runnerUser)
 	}
 	if os.Getpid() == 1 {
 		log.Debug("running as PID 1; use `init: true` / `docker run --init` to reap orphaned job processes")
@@ -72,7 +85,8 @@ parse:
 		cfg:     cfg,
 		api:     NewClient(cfg),
 		log:     log,
-		environ: childEnv(os.Environ(), os.Getuid()),
+		environ: childEnv(os.Environ(), cred == nil && os.Getuid() == 0),
+		cred:    cred,
 
 		retryDelay: 5 * time.Second,
 		updateWait: 30 * time.Second,
