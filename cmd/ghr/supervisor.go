@@ -299,15 +299,21 @@ const (
 // runnerCredential decides whom children run as. Started as root, ghr keeps
 // the credentials in root's processes and runs everything else as the runner
 // user: another uid cannot read root's /proc/<pid>/environ. Supplementary
-// groups (e.g. the Docker socket's, from --group-add) carry over; group 0 does
-// not.
+// groups (e.g. the Docker socket's, from --group-add) carry over. Docker lists
+// root's own group 0 once; only an extra 0 (--group-add 0, for Docker
+// Desktop's root:root socket) is passed on.
 func runnerCredential(uid int, groups []int, runAsRoot bool) *syscall.Credential {
 	if uid != 0 || runAsRoot {
 		return nil
 	}
 	c := &syscall.Credential{Uid: runnerUID, Gid: runnerGID, Groups: []uint32{}}
+	skippedRootGroup := false
 	for _, g := range groups {
-		if g != 0 && g != runnerGID {
+		switch {
+		case g == 0 && !skippedRootGroup:
+			skippedRootGroup = true
+		case g == runnerGID:
+		default:
 			c.Groups = append(c.Groups, uint32(g))
 		}
 	}

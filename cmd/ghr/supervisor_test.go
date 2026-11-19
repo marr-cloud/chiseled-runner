@@ -402,8 +402,12 @@ func TestRunnerCredential(t *testing.T) {
 		runAsRoot bool
 		want      *syscall.Credential
 	}{
-		{"root drops to the runner user, keeping extra groups but not 0", 0, []int{0, 999}, false,
+		{"root drops to the runner user, keeping --group-add groups but not root's own 0", 0, []int{0, 999}, false,
 			&syscall.Credential{Uid: 1001, Gid: 1001, Groups: []uint32{999}}},
+		// Docker lists root's group 0 once, and again for --group-add 0 (Docker
+		// Desktop's socket is root:root), which must reach the runner.
+		{"an explicit --group-add 0 is kept", 0, []int{0, 0}, false,
+			&syscall.Credential{Uid: 1001, Gid: 1001, Groups: []uint32{0}}},
 		{"RUN_AS_ROOT keeps root", 0, []int{0}, true, nil},
 		{"non-root cannot drop", 1001, []int{1001}, false, nil},
 	}
