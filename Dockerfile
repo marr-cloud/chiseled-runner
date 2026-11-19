@@ -30,7 +30,33 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # ------------------------------------------------------------- chisel ------
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS chisel
 ARG CHISEL_VERSION=v1.5.1
-RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/canonical/chisel/cmd/chisel@${CHISEL_VERSION}
+# chisel hardcodes the Ubuntu archive URL. Build it from the module proxy's
+# source (checked against the Go checksum database) with that one constant
+# pointed at UBUNTU_MIRROR. Package integrity is unchanged: chisel verifies
+# the archive's signed InRelease against the keys in chisel-releases.
+ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
+RUN <<'EOF'
+set -eu
+# http only: apt runs before ca-certificates is installed, and the signatures,
+# not TLS, are what protect the packages. No credentials (they would end up
+# in the published provenance), no characters that need quoting.
+printf '%s' "${UBUNTU_MIRROR}" | grep -Eqx 'http://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%+-]+)*/' || {
+  echo "UBUNTU_MIRROR must look like http://host[:port]/path/ (got '${UBUNTU_MIRROR}')" >&2
+  exit 1
+}
+go mod download "github.com/canonical/chisel@${CHISEL_VERSION}"
+rm -rf /src
+cp -r "$(go env GOMODCACHE)/github.com/canonical/chisel@${CHISEL_VERSION}" /src
+chmod -R u+w /src
+cd /src
+const='const ubuntuURL = "http://archive.ubuntu.com/ubuntu/"'
+grep -qF "${const}" internal/archive/archive.go || {
+  echo "chisel ${CHISEL_VERSION}: '${const}' not found; update the mirror patch" >&2
+  exit 1
+}
+sed -i "s|${const}|const ubuntuURL = \"${UBUNTU_MIRROR}\"|" internal/archive/archive.go
+CGO_ENABLED=0 go build -trimpath -o /out/chisel ./cmd/chisel
+EOF
 
 # ------------------------------------------------------------- runner ------
 # Download the official runner, verify it, and strip what a Linux glibc
@@ -92,9 +118,12 @@ EOF
 FROM --platform=$BUILDPLATFORM ubuntu:${UBUNTU_RELEASE} AS rootfs
 ARG UBUNTU_RELEASE
 ARG TARGETARCH
+ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
 # The Ubuntu archive occasionally times out from CI; retry rather than fail
-# a weekly build.
-RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries \
+# a weekly build. apt uses the same mirror as chisel; security.ubuntu.com
+# and ports.ubuntu.com (noble on an arm64 build host) stay as they are.
+RUN sed -i "s|http://archive.ubuntu.com/ubuntu/\?|${UBUNTU_MIRROR}|" /etc/apt/sources.list.d/ubuntu.sources \
+ && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80retries \
  && apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ca-certificates jq zstd >/dev/null
 COPY --from=chisel /out/chisel /usr/local/bin/chisel

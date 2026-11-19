@@ -10,7 +10,7 @@
 ## Supply chain
 
 - The runner tarball is verified against a SHA-256 taken from the GitHub release, and the build fails if it does not match.
-- Ubuntu packages come from the signed Ubuntu archive through chisel, and `chisel` itself is pinned (`CHISEL_VERSION`).
+- Ubuntu packages come from the signed Ubuntu archive through chisel, and `chisel` itself is pinned (`CHISEL_VERSION`) and built from the Go checksum database's verified source. With a custom `UBUNTU_MIRROR`, chisel still checks every package against the archive's `InRelease`, signed with the Ubuntu archive keys that chisel-releases lists: the mirror cannot alter packages, but you trust it to be current (chisel takes the `-security` pocket from it too).
 - Every GitHub Action in the workflows is pinned to a full commit SHA (with the version as a comment, which Dependabot keeps up to date), and checkouts do not persist the job token.
 - Release builds publish an SBOM and SLSA provenance, and the GHCR image carries a GitHub build attestation:
 

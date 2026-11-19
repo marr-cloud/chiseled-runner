@@ -123,6 +123,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.release }}-${{ matrix.target }}
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
+            UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu/
             RUNNER_VERSION=${{ needs.resolve.outputs.version }}
             RUNNER_SHA256_AMD64=${{ needs.resolve.outputs.sha_amd64 }}
             RUNNER_SHA256_ARM64=${{ needs.resolve.outputs.sha_arm64 }}
@@ -214,6 +215,7 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.release }}-${{ matrix.target }},mode=max
           build-args: |
             UBUNTU_RELEASE=${{ matrix.release }}
+            UBUNTU_MIRROR=http://azure.archive.ubuntu.com/ubuntu/
             RUNNER_VERSION=${{ needs.resolve.outputs.version }}
             RUNNER_SHA256_AMD64=${{ needs.resolve.outputs.sha_amd64 }}
             RUNNER_SHA256_ARM64=${{ needs.resolve.outputs.sha_arm64 }}
