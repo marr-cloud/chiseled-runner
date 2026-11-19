@@ -174,8 +174,23 @@ jobs:
           # Package metadata, so scanners can see the Ubuntu packages:
           docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec \
             'test -s /var/lib/chisel/manifest.wall; n=$(ls /var/lib/dpkg/status.d | wc -l); echo "$n packages recorded"; test "$n" -ge 20; grep -q "^Source: openssl" /var/lib/dpkg/status.d/libssl3t64'
+          # Archive tools, awk (used by many `curl | sh` installers), diff/patch, less:
+          docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
+            cd /tmp && echo hi > f
+            for z in -J --zstd -j; do tar "$z" -cf f.t f && test "$(tar "$z" -xOf f.t)" = hi; done
+            zip -q f.zip f && unzip -p f.zip f >/dev/null
+            test "$(echo "a b" | awk "{print \$2}")" = b
+            echo hello > g; diff f g > p.diff || true; patch -s f p.diff; test "$(cat f)" = hello
+            less --version | head -1
+            echo "archive and text tools ok"'
+          # Libraries setup-python's builds load (sqlite3, ctypes, lzma, bz2, readline, curses, dbm, uuid):
+          docker run --rm --entrypoint /usr/bin/bash "$IMG" -ec '
+            for l in libsqlite3.so.0 libffi.so.8 liblzma.so.5 libbz2.so.1.0 libzstd.so.1 libreadline.so.8 libncursesw.so.6 libpanelw.so.6 libtinfo.so.6 libgdbm.so.6 libgdbm_compat.so.4 libuuid.so.1; do
+              ls /usr/lib/*-linux-gnu/$l >/dev/null || { echo "missing $l"; exit 1; }; done; echo "python libs ok"'
           if [ "${{ matrix.target }}" = docker ]; then
             docker run --rm --entrypoint /usr/local/bin/docker "$IMG" --version
+            docker run --rm --user 1001 --entrypoint /usr/local/bin/docker "$IMG" buildx version
+            docker run --rm --user 1001 --entrypoint /usr/local/bin/docker "$IMG" compose version
           fi
           size=$(docker image inspect "$IMG" --format '{{.Size}}')
           echo "| ${{ matrix.release }} / ${{ matrix.target }} | $((size/1024/1024)) MB (amd64) |" >> "$GITHUB_STEP_SUMMARY"
@@ -337,6 +352,11 @@ jobs:
         with:
           node-version: 22
       - run: node --version
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: python stdlib modules that need system libraries
+        run: python -c "import ssl, sqlite3, ctypes, lzma, bz2, zlib, readline, curses, dbm.gnu, uuid; print('python ok')"
       - name: runner credentials are not visible to job steps
         run: test -z "${RUNNER_TOKEN:-}${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
       - name: git submodule (used by actions/checkout)

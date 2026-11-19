@@ -65,7 +65,7 @@ It takes one job, then removes itself from the repository.
 
 ## When chisel is not enough
 
-If your jobs need `apt`, `sudo`, compilers or Python, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
+If your jobs need `apt`, `sudo` or a compiler, a chiselled image is the wrong base. Reuse just the runner and `ghr` on a normal Ubuntu image instead:
 
 ```dockerfile
 FROM ubuntu:noble

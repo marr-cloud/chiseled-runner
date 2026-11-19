@@ -5,7 +5,7 @@
 #   docker build --build-arg UBUNTU_RELEASE=noble    --target slim   .
 #   docker build --build-arg UBUNTU_RELEASE=resolute --target docker .
 #
-# Targets:  slim    runner + shell + git/curl/jq/tar.   (default)
+# Targets:  slim    runner + shell + git/curl/jq/tar/xz/awk... (default)
 #           docker  slim + the static docker CLI, for jobs that use the host's socket.
 #
 # The final image is built FROM scratch from a rootfs cut with chisel
@@ -235,6 +235,9 @@ FROM ${DOCKER_CLI_IMAGE} AS dockercli
 
 FROM slim AS docker
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+# buildx (docker/build-push-action, `docker build` with BuildKit) and compose,
+# where the CLI looks for system-wide plugins. Both are static.
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/
 
 # The default target is the last stage, so keep `slim` last.
 FROM slim
