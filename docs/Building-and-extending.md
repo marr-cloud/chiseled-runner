@@ -24,7 +24,36 @@ Tools come from `slices/<release>.txt`, one chisel slice per line. Find slice na
 
 ## End-to-end check
 
-The CI smoke tests never talk to GitHub. To see a real job run on a local build, register an ephemeral runner with a unique label against a repository you own and push a workflow with `runs-on: [self-hosted, <label>]`:
+Before publishing, CI starts every freshly built amd64 image as an ephemeral runner of this repository and runs a real job on it (the `e2e` job in `build.yml`):
+
+- a JavaScript action that declares `node20`, which must run on Node 24;
+- `hashFiles()`, `actions/setup-node` writing to the tool cache, and `git submodule`;
+- no runner credentials visible to job steps;
+- on `-docker` images: `docker run hello-world` and a bind mount of `$GITHUB_WORKSPACE`.
+
+The runner's only label is `ghr-e2e-<random>-<release>-<variant>`, and the image job passes only if the runner's log shows it ran *that* variant's `e2e` job and the job succeeded. The step summary reports seconds from container start to "Listening for Jobs" and to the job being picked up.
+
+How the credentials are kept apart:
+
+- The GitHub App key and installation token never enter the container. The image job mints an installation token, uses it to get a registration token (valid one hour, good only for registering runners), revokes it, and passes only the registration token as `RUNNER_TOKEN`. Afterwards it deletes the runner through the API with a fresh token if it is still registered.
+- The image job has no registry credentials and only `contents: read`. A separate `publish` job, which needs both `image` and `e2e`, rebuilds from the image job's build cache, pushes and attests on another VM.
+- On `-docker` variants the job has the host's Docker socket, which is root on that VM, as it is on any host you give the socket to. There it can read the registration token, and the App key the image job used. That is acceptable here because only code that already has write access to this repository runs in these jobs (fork and Dependabot PRs skip them), but a compromised dependency of the job would reach them.
+
+### Setting it up in a fork or copy
+
+1. Create a GitHub App (no webhook) with the repository permission **Administration: read and write**, and install it only on the repository.
+2. Add the secrets `E2E_APP_ID` and `E2E_APP_PRIVATE_KEY` (the `.pem`), and the variable `E2E_ENABLED=true`.
+
+Without `E2E_ENABLED=true` the e2e parts are skipped and the build behaves as before. They are always skipped for pull requests from forks and from Dependabot, which get no secrets.
+
+### When it fails
+
+- **The run ends cancelled, with "no runner will come for: `e2e (...)`".** An image job failed before its runner could take its job (a build or smoke-test failure, or the runner never got online), so the `cancel-orphans` job cancelled the run instead of leaving that job queued. The real error is in the failed `image` job.
+- **Re-running.** Use *Re-run all jobs*: it also draws a new label. *Re-run failed jobs* re-runs `image` without its `e2e` job, so the new runner waits for nothing and fails after 15 minutes.
+
+### By hand
+
+To see a real job on a local build, register an ephemeral runner with a unique label against a repository you own and push a workflow with `runs-on: [self-hosted, <label>]`:
 
 ```bash
 ACCESS_TOKEN=$(gh auth token) docker run --rm --init -e ACCESS_TOKEN \
