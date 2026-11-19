@@ -185,7 +185,16 @@ jobs:
           if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
             echo "::error::E2E_ENABLED is true but the E2E_APP_ID / E2E_APP_PRIVATE_KEY secrets are empty"; exit 1
           fi
-          docker run -d --init --name e2e \
+          docker_args=()
+          if [ "${{ matrix.target }}" = docker ]; then
+            # Same setup as compose.docker.yaml: host socket, its group, and a work
+            # directory at the same path on both sides, owned by the runner user.
+            sudo install -d -o 1001 -g 1001 /tmp/runners
+            docker_args=(-v /var/run/docker.sock:/var/run/docker.sock
+                         --group-add "$(stat -c %g /var/run/docker.sock)"
+                         -v /tmp/runners:/tmp/runners -e RUNNER_WORKDIR_ROOT=/tmp/runners)
+          fi
+          docker run -d --init --name e2e "${docker_args[@]}" \
             -e APP_ID -e APP_PRIVATE_KEY \
             -e REPO_URL="https://github.com/${{ github.repository }}" \
             -e LABELS="$LABEL" -e EPHEMERAL=true -e DISABLE_AUTO_UPDATE=true \
@@ -301,6 +310,14 @@ jobs:
         run: test -z "${APP_PRIVATE_KEY:-}${APP_ID:-}${ACCESS_TOKEN:-}" && echo "no credentials in env"
       - name: git submodule (used by actions/checkout)
         run: git submodule status && echo "submodule ok"
+      - name: docker jobs use the host daemon
+        if: matrix.target == 'docker'
+        run: docker run --rm hello-world | grep 'Hello from Docker!'
+      - name: bind mounts of the workspace resolve on the host
+        if: matrix.target == 'docker'
+        run: |
+          echo ok > probe
+          test "$(docker run --rm -v "$GITHUB_WORKSPACE:/w" busybox cat /w/probe)" = ok && echo "workspace mount ok"
 
   keepalive:
     # Scheduled workflows are disabled after 60 days without repository activity.
