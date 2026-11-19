@@ -196,7 +196,11 @@ jobs:
               echo "#include <stdio.h>" > m.c
               echo "int f(double);" >> m.c
               echo "int main(void) { puts(\"linked\"); return f(1764.0) == 42 ? 0 : 1; }" >> m.c
-              cc -c f.c && ar rcs libf.a f.o && cc -o m m.c -L. -lf -lm && ./m
+              # -lresolv, -lpthread, -ldl: what cgo links (net, os/user, plugin)
+              cc -c f.c
+              ar rcs libf.a f.o
+              cc -o m m.c -L. -lf -lm -lresolv -lpthread -ldl
+              ./m
               echo ".RECIPEPREFIX = >" > Makefile
               echo "all:" >> Makefile
               echo ">@echo make ok" >> Makefile
@@ -395,7 +399,7 @@ jobs:
           cache: false
       - name: go test -race (cgo)
         if: matrix.target == 'build'
-        run: go test -race -count=1 -run 'TestConfig|TestAPIBase' ./cmd/ghr/
+        run: go test -race -count=1 ./...
       - name: docker jobs use the host daemon
         if: matrix.target == 'docker'
         run: docker run --rm hello-world | grep 'Hello from Docker!'

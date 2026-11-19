@@ -11,6 +11,8 @@ binutils_archiver
 # crt*.o, libc.so linker script, libm, C headers
 libc6-dev_libs
 libc6-dev_headers
+# -lresolv: cgo links it for package net (the DNS resolver)
+libc6-dev_libresolv
 linux-libc-dev_linux-headers
 linux-libc-dev_asm-headers
 make_bins
