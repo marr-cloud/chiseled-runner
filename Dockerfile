@@ -383,8 +383,9 @@ COPY --from=toolchain /toolchain/ /
 # Plain Ubuntu, for jobs that need apt packages, a C++ compiler, -dev
 # libraries... and for images that extend it with `RUN apt-get install`.
 # The security model is the slim image's: the container starts as root, ghr
-# runs the runner and every job as uid 1001, there is no sudo and no setuid
-# binary, and the runner's code is root's and read-only. What it gives up is
+# runs the runner and every job as uid 1001, sudo is a shim that never raises
+# privileges (full/sudo), there is no setuid binary, and the runner's code is
+# root's and read-only. What it gives up is
 # size and a far larger package set to scan and patch (docs/Security.md).
 # Runs on the target platform: apt installs under emulation for arm64.
 FROM ubuntu-${UBUNTU_RELEASE}-target AS full
@@ -422,11 +423,29 @@ apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
   "${icu}" $(grep -v '^[[:space:]]*#' /tmp/packages.txt | grep -v '^[[:space:]]*$') >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq >/dev/null
+# Keep the package lists, so that `apt-get install` (in a derived image, or a
+# job with RUN_AS_ROOT=true) works without an update first. apt names each
+# list after its source's URI: rename the mirror's lists for Ubuntu's own
+# sources (same signed archive) rather than fetch them again from there.
+# Each suite has one InRelease; pair the mirror's (on disk) with the names
+# apt would give Ubuntu's (--print-uris downloads nothing) by what follows
+# _dists_, then rename every list by its URI prefix.
+cd /var/lib/apt/lists
+ls -- *_InRelease > /tmp/lists.mirror
 mv /tmp/ubuntu.sources "${src}"
-# Package lists for those sources, so that `apt-get install` (in a derived
-# image, or a job with RUN_AS_ROOT=true) works without an update first.
-rm -rf /var/lib/apt/lists/*
-apt-get update -qq
+apt-get update --print-uris | awk '$2 ~ /_InRelease$/ { print $2 }' > /tmp/lists.ubuntu
+awk -F'_dists_' 'NR == FNR { to[$2] = $1; next } { print $1, to[$2] }' \
+    /tmp/lists.ubuntu /tmp/lists.mirror | sort -u |
+  while read -r from to; do
+    [ -n "${to}" ] || { echo "no Ubuntu source for the mirror's ${from}" >&2; exit 1; }
+    [ "${from}" = "${to}" ] && continue
+    for f in "${from}"_*; do mv -- "${f}" "${to}${f#"${from}"}"; done
+  done
+while read -r f; do
+  [ -e "${f}" ] || { echo "no ${f} after renaming the mirror's lists" >&2; exit 1; }
+done < /tmp/lists.ubuntu
+cd /
+rm -f /tmp/lists.mirror /tmp/lists.ubuntu
 apt-get clean
 rm -f /tmp/packages.txt
 

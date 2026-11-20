@@ -12,22 +12,43 @@ refuse() {
   echo "sudo: $*" >&2
   exit 1
 }
+usage="usage: sudo [-EHnkSv] [-u root] [--] COMMAND [ARGS...]"
 
+home="" validate="" reset=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -E | -H | -n | -k | -S | --preserve-env | --preserve-env=*) shift ;;
+    --preserve-env | --preserve-env=*) shift ;;
+    --set-home) home=1; shift ;;
     -u)
       [ $# -ge 2 ] || refuse "-u needs a user"
       case "$2" in root | 0) shift 2 ;; *) refuse "only -u root is supported (got '$2')" ;; esac
       ;;
     --) shift; break ;;
-    -*) refuse "option '$1' is not supported by this image's sudo" ;;
+    -?*)
+      # Flags, alone or clustered (-EH).
+      flags=${1#-}
+      case "$flags" in *[!EHnkSv]*) refuse "option '$1' is not supported by this image's sudo" ;; esac
+      case "$flags" in *H*) home=1 ;; esac
+      case "$flags" in *v*) validate=1 ;; esac
+      case "$flags" in *k*) reset=1 ;; esac
+      shift
+      ;;
     *) break ;;
   esac
 done
-[ $# -gt 0 ] || refuse "usage: sudo [-E] [-H] [-n] [-u root] [--] COMMAND [ARGS...]"
+
+if [ $# -eq 0 ]; then
+  # sudo -v checks for root access; sudo -k forgets cached credentials.
+  if [ -n "$validate" ]; then
+    [ "$(id -u)" = 0 ] || refuse "jobs on this runner run as uid $(id -u), not root"
+    exit 0
+  fi
+  [ -n "$reset" ] && exit 0
+  refuse "$usage"
+fi
 
 if [ "$(id -u)" = 0 ]; then
+  [ -z "$home" ] || export HOME=/root
   # env: like sudo, accept VAR=value assignments before the command.
   exec env "$@"
 fi
@@ -37,7 +58,25 @@ fi
 while [ $# -gt 0 ]; do
   case "$1" in [A-Za-z_]*=*) shift ;; *) break ;; esac
 done
-[ $# -gt 0 ] || refuse "usage: sudo [-E] [-H] [-n] [-u root] [--] COMMAND [ARGS...]"
+[ $# -gt 0 ] || refuse "$usage"
+
+# installed PKG [VERSION]: PKG (with or without :arch) is installed, at
+# VERSION if given. Held packages count.
+installed() {
+  st=$(dpkg-query -W -f='${Status} ${Version}' "$1" 2>/dev/null) || st=""
+  case "$st" in
+    "install ok installed "* | "hold ok installed "*) ;;
+    *)
+      # dpkg knows Architecture: all packages without an arch qualifier
+      # (ca-certificates:amd64 is ca-certificates).
+      case "$1" in *:*) ;; *) return 1 ;; esac
+      [ "$(dpkg-query -W -f='${Architecture}' "${1%%:*}" 2>/dev/null)" = all ] || return 1
+      installed "${1%%:*}" "${2:-}"
+      return
+      ;;
+  esac
+  [ -z "${2:-}" ] || [ "${st##* }" = "$2" ]
+}
 
 case "$1" in
   apt-get | apt)
@@ -66,12 +105,24 @@ case "$1" in
         # shellcheck disable=SC2086 # one word per package
         set -- $pkgs
         for arg in "$@"; do
-          pkg=${arg%%=*}
-          if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" = "install ok installed" ]; then
-            have="$have $pkg"
-          else
-            missing="$missing $pkg"
-          fi
+          case "$arg" in
+            *.deb)
+              # A local package file: installed if dpkg has that package at
+              # that version.
+              name=$(dpkg-deb -f "$arg" Package 2>/dev/null) || name=""
+              arch=$(dpkg-deb -f "$arg" Architecture 2>/dev/null) || arch=""
+              version=$(dpkg-deb -f "$arg" Version 2>/dev/null) || version=""
+              [ "$arch" = all ] || name="$name:$arch"
+              if [ -n "$version" ] && installed "$name" "$version"; then ok=1; else ok=""; fi
+              ;;
+            *)
+              # pkg, pkg:arch, pkg=version, pkg/release.
+              name=${arg%%=*} name=${name%%/*} version=""
+              case "$arg" in *=*) version=${arg#*=} ;; esac
+              if installed "$name" "$version"; then ok=1; else ok=""; fi
+              ;;
+          esac
+          if [ -n "$ok" ]; then have="$have $arg"; else missing="$missing $arg"; fi
         done
         if [ -z "$missing" ]; then
           echo "sudo: already installed:${have}" >&2
@@ -82,7 +133,7 @@ case "$1" in
     ;;
 esac
 
-cat >&2 <<EOF
+cat >&2 <<MSG
 sudo: jobs on this runner run as uid $(id -u), not root, and this image's sudo
 cannot raise privileges${missing:+ (missing:${missing})}. Either:
   - start the runner with RUN_AS_ROOT=true (jobs run as root, as on
@@ -91,5 +142,5 @@ cannot raise privileges${missing:+ (missing:${missing})}. Either:
       FROM meitrix8208/chiseled-runner:<release>-full
       RUN apt-get update && apt-get install -y --no-install-recommends <packages>
 See https://github.com/marr-cloud/chiseled-runner/blob/main/docs/Building-and-extending.md#when-chisel-is-not-enough
-EOF
+MSG
 exit 1

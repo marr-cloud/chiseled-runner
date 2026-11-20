@@ -210,6 +210,15 @@ jobs:
               test "$(hello)" = "Hello, world!"
               test "$(sudo -- id -u)" = 0
               test "$(sudo -u root bash -c "echo ok")" = ok
+              # Clustered options, -v and -k alone, and -H setting HOME:
+              sudo -EH true
+              sudo -nE true
+              sudo -v
+              sudo -k
+              test "$(HOME=/home/runner sudo -H sh -c "echo \$HOME")" = /root
+              # A held package is still installed, for the runner user too:
+              apt-mark hold git >/dev/null
+              setpriv --reuid 1001 --regid 1001 --clear-groups sudo apt-get install -y git
               echo "sudo as root ok"'
             # As the runner user it cannot install anything...
             docker run --rm --user 1001 --entrypoint /usr/bin/bash "$IMG" -ec '
@@ -224,6 +233,15 @@ jobs:
               fails sudo -u nobody id
               fails sudo -i
               fails sudo DEBIAN_FRONTEND=noninteractive id
+              fails sudo -v
+              fails sudo -Ei id
+              # A version other than the installed one is not installed:
+              fails sudo apt-get install -y git=0.0
+              # Nor is a local .deb the image does not have:
+              mkdir -p p/DEBIAN
+              printf "Package: hello\nVersion: 1.0\nArchitecture: all\nMaintainer: x\nDescription: x\n" > p/DEBIAN/control
+              dpkg-deb --build p hello.deb >/dev/null
+              fails sudo apt-get install -y ./hello.deb
               fails apt-get install -y -qq hello
               echo "sudo as 1001 refuses"'
             # ...but an update, or packages the image already has, pass, so
@@ -237,6 +255,16 @@ jobs:
               sudo apt install -y git=$(dpkg-query -W -f="\${Version}" git)
               sudo apt-get -y install git
               sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold -t "$codename" install -y git
+              sudo -EH apt-get install -y git
+              sudo apt-get install -y "git/$codename"
+              # An arch qualifier on an Architecture: all package:
+              sudo apt-get install -y "ca-certificates:$(dpkg --print-architecture)"
+              # A local .deb of what is installed:
+              cd /tmp && mkdir -p p/DEBIAN
+              printf "Package: git\nVersion: %s\nArchitecture: %s\nMaintainer: x\nDescription: x\n" \
+                "$(dpkg-query -W -f="\${Version}" git)" "$(dpkg --print-architecture)" > p/DEBIAN/control
+              dpkg-deb --build p git.deb >/dev/null
+              sudo apt-get install -y ./git.deb
               echo "sudo as 1001 passes for installed packages"'
           else
             # Package metadata, so scanners can see the Ubuntu packages:
