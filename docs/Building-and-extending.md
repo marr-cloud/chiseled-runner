@@ -69,7 +69,7 @@ It takes one job, then removes itself from the repository.
 
 If your jobs need `apt` packages, a C++ compiler or `-dev` libraries, use the `-full` tags: plain Ubuntu with the same runner and `ghr`, `build-essential`, `pkg-config`, `python3` and the docker CLI (the package list is `packages/full.txt`). Jobs run as uid 1001, and the image's `sudo` never raises privileges. A workflow that runs `sudo apt-get install` (written for myoung34 or `ubuntu-latest`) has two options:
 
-- **Start the runner with `RUN_AS_ROOT=true`.** Jobs run as root and `sudo apt-get install` works on the first run, as on myoung34, with the same exposure (see [Security](Security.md)). The image has its package lists, so no `apt-get update` is needed first.
+- **Start the runner with `RUN_AS_ROOT=true`.** Jobs run as root and `sudo apt-get install` works on the first run, as on myoung34, with the same exposure (see [Security](Security.md)). The image keeps its package lists (about 50 MB), so no `apt-get update` is needed first. They date from the image build, rebuilt weekly: if an install fails with `404 Not Found` because a package was updated since, run `sudo apt-get update` first.
 - **Add the packages to your own image** and keep jobs at uid 1001:
 
 ```dockerfile
@@ -84,7 +84,7 @@ Once a migrated workflow passes with `RUN_AS_ROOT=true`, you can move its packag
 1. Collect the packages its `sudo apt-get install` lines name, and install them in an image built `FROM` `-full`, as above.
 2. Run that image without `RUN_AS_ROOT`.
 
-As uid 1001, the image's `sudo` lets `apt-get update` pass, and `apt-get install` too when every package it names is already installed ("already installed: ..."). A package you missed fails the job with a message naming it, instead of installing silently as root.
+As uid 1001, the image's `sudo` lets `apt-get update` pass, and `apt-get install` too when every package it names is already installed ("already installed: ..."): held packages count, `pkg=version` must match the installed version, and a local `.deb` must match the installed package and version. A package you missed fails the job with a message naming it, instead of installing silently as root.
 
 Keep the image's entrypoint and do not set `USER`: the container starts as root so that `ghr` can keep the credentials away from jobs, and runs the runner as uid 1001 itself. If a package you add ships setuid binaries, remove the bits (`find / -xdev -perm /6000 -type f -exec chmod ug-s {} +`) unless your jobs should be able to get root.
 
